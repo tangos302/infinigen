@@ -43,6 +43,40 @@ from ...materials import apply_palette_slots
 
 _ROOF_ARCHETYPES = ("gabled", "hipped", "flat")
 
+_BUILDING_ARCHETYPES = ("cottage", "barn", "tower", "cabin", "longhouse")
+
+
+# Per-archetype default proportions / roof / window count. The user can
+# still override any individual knob; archetype just provides sensible
+# defaults so the silhouettes read as DIFFERENT BUILDINGS, not just a
+# rectangle in different dimensions.
+_ARCHETYPE_DEFAULTS = {
+    "cottage": dict(
+        width=4.0, depth=3.0, wall_height=2.5, roof_height=1.6,
+        roof_archetype="gabled", n_windows=4,
+    ),
+    "barn": dict(
+        # Long + low + steep gabled — silhouette dominated by the roof
+        width=7.0, depth=3.5, wall_height=2.2, roof_height=2.6,
+        roof_archetype="gabled", n_windows=2,
+    ),
+    "tower": dict(
+        # Square footprint, tall walls, peaked hipped — guard tower feel
+        width=2.6, depth=2.6, wall_height=5.0, roof_height=2.0,
+        roof_archetype="hipped", n_windows=4,
+    ),
+    "cabin": dict(
+        # Small, snug, basic gabled — Firewatch lookout cabin
+        width=3.0, depth=3.0, wall_height=2.2, roof_height=1.4,
+        roof_archetype="gabled", n_windows=2,
+    ),
+    "longhouse": dict(
+        # 2-story-ish wide rectangle, hipped — manor / lodge feel
+        width=6.0, depth=4.0, wall_height=3.5, roof_height=1.8,
+        roof_archetype="hipped", n_windows=6,
+    ),
+}
+
 
 @dataclass
 class _BuildingMesh:
@@ -248,29 +282,39 @@ class LowPolyHouseFactory(AssetFactory):
     def __init__(
         self,
         factory_seed,
-        roof_archetype: str = "gabled",
-        width: float = 4.0,
-        depth: float = 3.0,
-        wall_height: float = 2.5,
-        roof_height: float = 1.6,
-        n_windows: int = 4,
+        building_archetype: str = "cottage",
+        roof_archetype: str | None = None,
+        width: float | None = None,
+        depth: float | None = None,
+        wall_height: float | None = None,
+        roof_height: float | None = None,
+        n_windows: int | None = None,
         wall_color: str | None = "rock_pale",
         roof_color: str | None = "rock_shadow",
         accent_color: str | None = "accent_red",
         coarse: bool = False,
     ):
         super().__init__(factory_seed, coarse=coarse)
+        if building_archetype not in _BUILDING_ARCHETYPES:
+            raise ValueError(
+                f"unknown building_archetype {building_archetype!r}; "
+                f"valid: {_BUILDING_ARCHETYPES}"
+            )
+        # Pull archetype defaults; explicit kwargs override.
+        d = _ARCHETYPE_DEFAULTS[building_archetype]
+        self.building_archetype = building_archetype
+        roof_archetype = roof_archetype or d["roof_archetype"]
         if roof_archetype not in _ROOF_ARCHETYPES:
             raise ValueError(
                 f"unknown roof_archetype {roof_archetype!r}; "
                 f"valid: {_ROOF_ARCHETYPES}"
             )
         self.roof_archetype = roof_archetype
-        self.width = float(width)
-        self.depth = float(depth)
-        self.wall_height = float(wall_height)
-        self.roof_height = float(roof_height)
-        self.n_windows = int(n_windows)
+        self.width = float(width if width is not None else d["width"])
+        self.depth = float(depth if depth is not None else d["depth"])
+        self.wall_height = float(wall_height if wall_height is not None else d["wall_height"])
+        self.roof_height = float(roof_height if roof_height is not None else d["roof_height"])
+        self.n_windows = int(n_windows if n_windows is not None else d["n_windows"])
         self.wall_color = wall_color
         self.roof_color = roof_color
         self.accent_color = accent_color
