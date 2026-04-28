@@ -59,22 +59,23 @@ def _setup_world_lighting():
 
 
 def _frame_camera(targets: list[bpy.types.Object]):
-    """Place camera so all `targets` fit in frame. Camera looks slightly down
-    at the row from -Y."""
+    """Place camera so all `targets` fit in frame. Head-on view from -Y to
+    preserve the silhouette of every asset and not foreshorten the row."""
     if not targets:
         return
-    centers = [Vector(o.location) + Vector((0, 0, max(o.dimensions.z * 0.5, 0.1))) for o in targets]
-    cx = sum(c.x for c in centers) / len(centers)
-    cz = max(c.z for c in centers)
-    span_x = max(c.x for c in centers) - min(c.x for c in centers)
-    span_z = max(o.dimensions.z for o in targets) if targets else 1
-    # Heuristic: pull the camera back enough to cover horizontal span,
-    # tilt it down toward the centerline.
-    distance = max(span_x, 4.0) * 1.4
-    cam_loc = (cx, -distance, cz + max(span_z * 0.5, 1.0))
+    xs = [o.location.x for o in targets]
+    zs = [o.location.z + o.dimensions.z * 0.5 for o in targets]
+    cx = (min(xs) + max(xs)) / 2.0
+    cz = (min(zs) + max(zs)) / 2.0
+    span_x = max(xs) - min(xs)
+    span_z = max(zs) - min(zs)
+    # Pull back enough that both rows are in frame. Head-on (no tilt
+    # downward) so both rows read cleanly.
+    distance = max(span_x, 4.0) * 1.2 + 2.0
+    cam_loc = (cx, -distance, cz)
     bpy.ops.object.camera_add(location=cam_loc)
     cam = bpy.context.active_object
-    target = Vector((cx, 0, cz * 0.7))
+    target = Vector((cx, 0, cz))
     cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
     cam.data.lens = 50
     bpy.context.scene.camera = cam
@@ -119,14 +120,18 @@ def compare_render(
 
     stats: dict = {}
     spawned = []
+    # Layout: 5 columns × 2 rows. Upstream on top (elevated), Maquette on
+    # bottom (ground level). Camera shoots head-on so both rows show without
+    # one occluding the other.
+    upstream_z = max(spacing * 0.7, 1.5)  # lift upstream above ground row
     for col, s in enumerate(seeds):
         x = (col - (len(seeds) - 1) / 2) * spacing
         up = _spawn(
-            upstream_factory_cls, s, (x, 0, 0),
+            upstream_factory_cls, s, (x, 0, upstream_z),
             factory_kwargs=upstream_kwargs, name_prefix="Upstream",
         )
         mq = _spawn(
-            maquette_factory_cls, s, (x, spacing * 1.1, 0),
+            maquette_factory_cls, s, (x, 0, 0),
             factory_kwargs=maquette_kwargs, name_prefix="Maquette",
         )
         spawned.extend([up, mq])
