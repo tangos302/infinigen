@@ -163,7 +163,8 @@ def _skeleton_to_skin_object(name: str, skeleton: list[_SkeletonNode]) -> bpy.ty
     bm.free()
 
     obj = bpy.data.objects.new(name, me)
-    bpy.context.collection.objects.link(obj)
+    # Use scene.collection — context.collection can be None in headless.
+    bpy.context.scene.collection.objects.link(obj)
 
     # Add SKIN modifier — this is the heart of the Sapling-style approach.
     # The modifier reads per-vertex radii from a "skin_vertices" layer that
@@ -180,9 +181,14 @@ def _skeleton_to_skin_object(name: str, skeleton: list[_SkeletonNode]) -> bpy.ty
             skin_layer[i].use_root = True
 
     # Apply the modifier so we have a real mesh we can flat-shade and
-    # decimate downstream. The skin modifier doesn't need a UI context
-    # so this is safe in headless.
-    butil.apply_modifiers(obj)
+    # decimate downstream. butil.apply_modifiers() invalidates the
+    # `obj` Python reference under some Blender 4.2 conditions
+    # (StructRNA removed); use direct ops with explicit selection so
+    # the reference survives.
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.modifier_apply(modifier="Skin")
 
     return obj
 
@@ -327,15 +333,21 @@ class NativeLowPolyTreeFactory(AssetFactory):
         self.target_polys = target_polys
         self.palette_color = palette_color
 
-    # AssetFactory interface — we do everything in spawn_asset for simplicity;
-    # there's no separate placeholder/finalize step needed for native trees.
+    # AssetFactory interface — placeholder is a lightweight stand-in (Empty);
+    # the real tree mesh is built in create_asset. AssetFactory.spawn_asset
+    # deletes the placeholder after create_asset returns, and only the
+    # asset survives — so the two MUST be different objects, otherwise our
+    # tree gets garbage-collected.
     def create_placeholder(self, **kwargs) -> bpy.types.Object:
-        return self._build()
+        ph = bpy.data.objects.new(
+            f"NativeTree({self.factory_seed})_placeholder",
+            None,  # Empty
+        )
+        bpy.context.scene.collection.objects.link(ph)
+        return ph
 
     def create_asset(self, placeholder=None, **kwargs) -> bpy.types.Object:
-        if placeholder is None:
-            return self._build()
-        return placeholder
+        return self._build()
 
     def _build(self) -> bpy.types.Object:
         rng = random.Random(self.factory_seed)
