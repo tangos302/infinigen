@@ -140,6 +140,53 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 9 — "small farmstead at harvest time"
+
+Built 2026-04-28 via headless Blender. Customer prompt: "small farmstead
+at harvest time — barn, fields, maybe a windmill, late-afternoon
+golden light".
+
+- ✅ Farmhouse (cottage) + barn + silo (tower archetype)
+- ✅ Animal pen (4 post_and_rail fence segments around 6m square)
+- ✅ Kitchen garden with picket fence + bush-archetype shrubs
+- ✅ Forest ring + 6 boulders along field edges
+- ✅ Barrel/crate clusters by barn + farmhouse porch
+- ✅ Lanterns by the buildings (golden-hour atmosphere)
+- Saved: `_artifacts/maquette/prompt_farmstead.{png,blend}`
+
+**Gaps hit (9):**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyHaystackFactory` | THE harvest-time tell — without it the scene is just "farm buildings" |
+| `LowPolyCropRowFactory` | crop fields are the second tell; flat ground reads as "lawn" not "fields" |
+| `LowPolyWindmillFactory` | farmstead silhouette staple (and Wild West / fishing village too) |
+| `LowPolyScarecrowFactory` | iconic harvest prop |
+| `LowPolyWellFactory` | farm well — medieval + farmstead = 2 attempts now |
+| `LowPolyHayBaleFactory` | small round/square bales scattered between fields and barn |
+| `LowPolyPlowFactory` / `LowPolyCartFactory` | agricultural machinery; cart also Wild West (Wagon archetype) |
+| `LowPolyChickenCoopFactory` | small farm outbuilding, can be Building archetype variant |
+| `LowPolyTroughFactory` | water/feed trough for the animal pen |
+
+**Result**: scene reads as "small village, no farming activity". The
+harvest narrative (the prompt's whole point) is invisible — every
+signature prop is missing.
+
+NEW factories surfaced this attempt (not in any earlier list):
+`LowPolyHaystackFactory`, `LowPolyCropRowFactory`,
+`LowPolyScarecrowFactory`, `LowPolyHayBaleFactory`,
+`LowPolyPlowFactory`, `LowPolyChickenCoopFactory`,
+`LowPolyTroughFactory`.
+
+Notes:
+- Plow vs Cart vs Wagon: probably one factory `LowPolyAgVehicleFactory`
+  with archetypes (plow, handcart, ox_cart, covered_wagon).
+- ChickenCoop could be a `LowPolyHouseFactory(building_archetype="coop")`
+  rather than its own factory — small angled-roof box, similar
+  enough to existing house-archetype geometry.
+- Trough is geometrically trivial (long shallow box with hollow
+  top) — could be a Crate archetype "trough".
+
 ### Attempt 8 — re-run "medieval village by a stream" with WaterSurface
 
 Built 2026-04-28 after shipping LowPolyWaterSurfaceFactory. The stream
@@ -1000,6 +1047,175 @@ roof_color  : str = "rock_shadow"
 ```
 
 Slots: 3. Polycount: ~50.
+
+---
+
+## Specs · Tier 5 (discovered in attempt 9 — farmstead)
+
+### `LowPolyHaystackFactory`
+
+A pile of hay — the harvest-time silhouette. Conical or rounded mound.
+
+```
+haystack_archetype : str = "cone"       "cone", "rounded_mound", "stacked_disks"
+height : float = 1.8
+radius : float = 1.2
+n_sides : int = 8                       low-poly silhouette
+n_layers : int = 4                      for stacked_disks
+top_offset : float = 0.0                lean (a slumped haystack reads better)
+
+hay_color : str = "foliage_lemon"       slot 0 — yellow-amber straw
+band_color : str = "rust_metal"         slot 1 — center pole tip / cap (optional)
+```
+
+Slots: 1–2. Polycount: ~30. Implementation: cone-with-flat-shaded-sides
+for `cone`; tilted ellipsoid (icosphere subdiv 1) for `rounded_mound`;
+3-4 stacked cylindrical disks (decreasing radius) for `stacked_disks`
+which is the more stylized read.
+
+### `LowPolyHayBaleFactory`
+
+Small individual hay bales — round or rectangular. Scattered between
+fields.
+
+```
+bale_archetype : str = "round"          "round", "rectangular"
+size : tuple = (0.8, 0.8, 0.6)          for rectangular
+radius, length : float = 0.5, 1.0       for round
+band_count : int = 2                    horizontal twine binds
+
+bale_color : str = "foliage_lemon"
+band_color : str = "wood"
+```
+
+Slots: 1–2. Polycount: ~20. Round = short cylinder lying on side;
+rectangular = box. Twine bands = thin protruding loops, optional.
+
+### `LowPolyCropRowFactory`
+
+A patch of crop field — rows of low vegetation. Reads as "this is
+farmed land" rather than wild grass.
+
+```
+crop_archetype : str = "wheat"          "wheat", "corn", "vegetable_rows"
+extent : tuple = (6, 4)                 m × m
+n_rows : int = 8
+row_height : float = 0.6                wheat short, corn tall (~1.5)
+ridge_height : float = 0.05             tilled-soil ridges between rows
+crop_color : str = "foliage_lemon"      wheat-amber for `wheat`,
+                                        `foliage_apple` for greens
+soil_color : str = "rock_warm"          tilled-earth slot
+```
+
+Slots: 2. Polycount: ~80–200. Implementation: per row, alternating
+ridge box + low-density crop strip (small triangles or tiny cones).
+Rather than instancing thousands of crop blades, generate a single
+flat-shaded "stylized crop strip" per row — a chunky band with
+serrated top edge.
+
+### `LowPolyWindmillFactory`
+
+A windmill or windpump. Tall central tower + rotating blades.
+
+```
+windmill_archetype : str = "dutch"      "dutch", "western_pump", "stone_mill"
+tower_height : float = 6.0
+tower_top_radius : float = 0.7
+tower_bottom_radius : float = 1.2
+n_blades : int = 4                      4 for dutch / 6 for pump
+blade_length : float = 3.0
+blade_angle : float = math.radians(20)  tilt around hub
+has_dome : bool = True                  Dutch onion-cap
+
+tower_color : str = "rock_pale"         (wood for `western_pump`)
+blade_color : str = "wood"
+roof_color  : str = "rock_shadow"
+```
+
+Slots: 3. Polycount: ~80.
+
+### `LowPolyScarecrowFactory`
+
+A T-pole scarecrow. Frame + stuffed body + head.
+
+```
+height : float = 1.8
+arm_span : float = 1.2
+has_hat : bool = True
+
+frame_color : str = "wood"
+body_color  : str = "stucco"            burlap-ish
+hat_color   : str = "rock_shadow"
+```
+
+Slots: 3. Polycount: ~30. Cross of two boxes (vertical pole + horizontal
+arm-bar) + a small box body draped on the cross + small icosphere head.
+
+### `LowPolyAgVehicleFactory`
+
+Agricultural / wagon vehicles. Single factory, multiple archetypes
+since the underlying geometry (4 wheels + a box body) is shared.
+
+```
+vehicle_archetype : str = "handcart"
+                    Options: "handcart", "ox_cart", "covered_wagon",
+                             "plow"
+length, width, height : auto-from-archetype
+n_wheels : int                          0 for plow, 2 for handcart, 4 for cart/wagon
+has_canopy : bool                       True for covered_wagon
+
+body_color = "wood"
+wheel_color = "rock_shadow"
+canopy_color = "stucco"
+```
+
+(Replaces the standalone `LowPolyWagonFactory` and `LowPolyPlowFactory`
+specs — the geometry is too similar to justify two factories.)
+
+Slots: 2–3. Polycount: ~50–100.
+
+### `LowPolyTroughFactory`
+
+Long shallow water/feed trough for animal pens. Geometrically a
+stretched crate with hollow top.
+
+```
+length : float = 1.8
+width : float = 0.45
+height : float = 0.35
+wall_thickness : float = 0.05
+has_water : bool = False                add a thin water plane inside
+
+body_color = "wood"
+water_color = "water"
+```
+
+Slots: 1–2. Polycount: ~20. Implementation: outer box + smaller
+inverted-cap inset to hollow the top. Water plane is just a flat
+quad below the rim.
+
+May get folded into `LowPolyCrateFactory` as a `crate_archetype="trough"`
+since geometry is so similar.
+
+### `LowPolyChickenCoopFactory`
+
+Small farm outbuilding — angled-roof box, sometimes with chicken
+holes. Could be a Building archetype variant.
+
+```
+length, width, height : 1.6, 1.0, 0.9
+roof_overhang : 0.2
+has_chicken_door : bool = True          small arch hole
+has_perch : bool = False                short stick out front
+
+wall_color = "wood"
+roof_color = "rock_shadow"
+```
+
+Slots: 2. Polycount: ~25.
+
+May be implemented as `LowPolyHouseFactory(building_archetype="coop")`
+rather than its own factory.
 
 ---
 
