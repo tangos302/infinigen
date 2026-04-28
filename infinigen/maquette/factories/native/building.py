@@ -54,26 +54,31 @@ _ARCHETYPE_DEFAULTS = {
     "cottage": dict(
         width=4.0, depth=3.0, wall_height=2.5, roof_height=1.6,
         roof_archetype="gabled", n_windows=4, has_chimney=True,
+        foundation_height=0.4,
     ),
     "barn": dict(
         # Long + low + steep gabled — silhouette dominated by the roof
         width=7.0, depth=3.5, wall_height=2.2, roof_height=2.6,
         roof_archetype="gabled", n_windows=2, has_chimney=False,
+        foundation_height=0.0,  # barns sit directly on dirt
     ),
     "tower": dict(
         # Square footprint, tall walls, peaked hipped — guard tower feel
         width=2.6, depth=2.6, wall_height=5.0, roof_height=2.0,
         roof_archetype="hipped", n_windows=4, has_chimney=False,
+        foundation_height=0.8,  # tall foundation reads as fortified base
     ),
     "cabin": dict(
         # Small, snug, basic gabled — Firewatch lookout cabin
         width=3.0, depth=3.0, wall_height=2.2, roof_height=1.4,
         roof_archetype="gabled", n_windows=2, has_chimney=True,
+        foundation_height=0.3,
     ),
     "longhouse": dict(
         # 2-story-ish wide rectangle, hipped — manor / lodge feel
         width=6.0, depth=4.0, wall_height=3.5, roof_height=1.8,
         roof_archetype="hipped", n_windows=6, has_chimney=True,
+        foundation_height=0.5,
     ),
 }
 
@@ -99,31 +104,63 @@ def _add_walls(
     width: float,
     depth: float,
     wall_height: float,
-) -> tuple[list, int]:
-    """Build 4 wall quads + a floor (hidden underneath). Returns
-    (wall_top_ring, n_wall_faces) — the top-ring verts are the anchor
-    for whichever roof archetype runs next."""
+    foundation_height: float = 0.0,
+) -> tuple[list, int, int]:
+    """Build the wall box. If foundation_height > 0, the lower band of
+    each wall is split into a separate quad strip so the caller can
+    assign it a different material slot.
+
+    Returns (wall_top_ring, n_main_wall_faces, n_foundation_faces).
+    Foundation faces are added FIRST so the caller can assign them to
+    a dedicated slot via index range."""
     hw, hd = width / 2, depth / 2
-    # Bottom ring (floor corners)
+    has_foundation = foundation_height > 1e-4
+    n_foundation_faces = 0
+    n_before_walls = _bm_face_count(bm)
+
+    # Bottom ring (z=0)
     b00 = bm.verts.new((-hw, -hd, 0))
     b10 = bm.verts.new((+hw, -hd, 0))
     b11 = bm.verts.new((+hw, +hd, 0))
     b01 = bm.verts.new((-hw, +hd, 0))
-    # Top ring (wall tops)
+
+    if has_foundation:
+        # Mid ring (z=foundation_height) — splits walls into foundation strip + main
+        m00 = bm.verts.new((-hw, -hd, foundation_height))
+        m10 = bm.verts.new((+hw, -hd, foundation_height))
+        m11 = bm.verts.new((+hw, +hd, foundation_height))
+        m01 = bm.verts.new((-hw, +hd, foundation_height))
+    else:
+        m00, m10, m11, m01 = b00, b10, b11, b01
+
+    # Top ring (z=wall_height)
     t00 = bm.verts.new((-hw, -hd, wall_height))
     t10 = bm.verts.new((+hw, -hd, wall_height))
     t11 = bm.verts.new((+hw, +hd, wall_height))
     t01 = bm.verts.new((-hw, +hd, wall_height))
+
     bm.verts.ensure_lookup_table()
-    n_before = _bm_face_count(bm)
-    # Floor (skip — invisible from outside, but include for closed mesh)
+
+    # Foundation strip (4 quads) — added first so material slot tagging
+    # by index range is clean.
+    if has_foundation:
+        n_before_foundation = _bm_face_count(bm)
+        bm.faces.new((b00, b10, m10, m00))   # south foundation
+        bm.faces.new((b10, b11, m11, m10))   # east
+        bm.faces.new((b11, b01, m01, m11))   # north
+        bm.faces.new((b01, b00, m00, m01))   # west
+        n_foundation_faces = _bm_face_count(bm) - n_before_foundation
+
+    # Floor (z=0)
     bm.faces.new((b00, b10, b11, b01))
-    # 4 walls (front=south=−Y, back=+Y, left=−X, right=+X)
-    bm.faces.new((b00, b10, t10, t00))   # south wall
-    bm.faces.new((b10, b11, t11, t10))   # east
-    bm.faces.new((b11, b01, t01, t11))   # north
-    bm.faces.new((b01, b00, t00, t01))   # west
-    return [t00, t10, t11, t01], _bm_face_count(bm) - n_before
+    # Main wall strip (4 quads from mid → top)
+    bm.faces.new((m00, m10, t10, t00))   # south
+    bm.faces.new((m10, m11, t11, t10))   # east
+    bm.faces.new((m11, m01, t01, t11))   # north
+    bm.faces.new((m01, m00, t00, t01))   # west
+
+    n_walls = _bm_face_count(bm) - n_before_walls - n_foundation_faces
+    return [t00, t10, t11, t01], n_walls, n_foundation_faces
 
 
 def _add_roof_gabled(
@@ -331,9 +368,11 @@ class LowPolyHouseFactory(AssetFactory):
         roof_height: float | None = None,
         n_windows: int | None = None,
         has_chimney: bool | None = None,
+        foundation_height: float | None = None,
         wall_color: str | None = "rock_pale",
         roof_color: str | None = "rock_shadow",
         accent_color: str | None = "accent_red",
+        foundation_color: str | None = "rock_shadow",
         coarse: bool = False,
     ):
         super().__init__(factory_seed, coarse=coarse)
@@ -358,9 +397,13 @@ class LowPolyHouseFactory(AssetFactory):
         self.roof_height = float(roof_height if roof_height is not None else d["roof_height"])
         self.n_windows = int(n_windows if n_windows is not None else d["n_windows"])
         self.has_chimney = bool(has_chimney if has_chimney is not None else d["has_chimney"])
+        self.foundation_height = float(
+            foundation_height if foundation_height is not None else d["foundation_height"]
+        )
         self.wall_color = wall_color
         self.roof_color = roof_color
         self.accent_color = accent_color
+        self.foundation_color = foundation_color
 
     def create_placeholder(self, **kwargs) -> bpy.types.Object:
         ph = bpy.data.objects.new(
@@ -376,10 +419,18 @@ class LowPolyHouseFactory(AssetFactory):
         rng = random.Random(self.factory_seed)
         bm = bmesh.new()
 
-        # 1. Walls
+        # 1. Walls (+ optional foundation strip, returned in face_count
+        # via the n_foundation_faces channel; foundation faces are
+        # FIRST, walls follow).
         face_count_walls_start = _bm_face_count(bm)
-        top_ring, _ = _add_walls(bm, self.width, self.depth, self.wall_height)
+        top_ring, _, n_foundation_faces = _add_walls(
+            bm, self.width, self.depth, self.wall_height,
+            foundation_height=self.foundation_height,
+        )
         face_count_walls_end = _bm_face_count(bm)
+        # Range for foundation slot reassignment (slot 3)
+        face_count_foundation_start = face_count_walls_start
+        face_count_foundation_end = face_count_walls_start + n_foundation_faces
 
         # 2. Roof
         face_count_roof_start = face_count_walls_end
@@ -414,13 +465,20 @@ class LowPolyHouseFactory(AssetFactory):
         )
         bpy.context.scene.collection.objects.link(obj)
 
-        # Pre-allocate 3 material slots so polygon.material_index sticks
-        while len(obj.data.materials) < 3:
+        # Pre-allocate 4 material slots so polygon.material_index sticks
+        # (slot 3 = foundation, even when foundation_height=0 we keep
+        # the slot count consistent for predictable indexing).
+        while len(obj.data.materials) < 4:
             obj.data.materials.append(None)
 
         # Assign material_index per face based on the recorded ranges.
-        # All polys default to slot 0 (walls). Override the roof + opening
-        # ranges.
+        # Default = slot 0 (walls). Override:
+        #   - foundation strip   → slot 3
+        #   - roof faces         → slot 1
+        #   - door + windows     → slot 2
+        if face_count_foundation_end > face_count_foundation_start:
+            for i in range(face_count_foundation_start, face_count_foundation_end):
+                obj.data.polygons[i].material_index = 3
         for i in range(face_count_roof_start, face_count_roof_end):
             obj.data.polygons[i].material_index = 1
         for i in range(face_count_open_start, face_count_open_end):
@@ -430,11 +488,12 @@ class LowPolyHouseFactory(AssetFactory):
         for p in obj.data.polygons:
             p.use_smooth = False
 
-        # Apply 3-slot palette
+        # Apply 4-slot palette
         slot_colors = [
             self.wall_color or "rock_pale",
             self.roof_color or "rock_shadow",
             self.accent_color or "accent_red",
+            self.foundation_color or "rock_shadow",
         ]
         apply_palette_slots(obj, slot_colors)
         return obj
