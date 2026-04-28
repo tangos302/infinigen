@@ -30,9 +30,18 @@ MAQUETTE_PALETTE: dict[str, str] = {
     "rock_cool":    "#7E8590",   # slate grey-blue
     "rock_pale":    "#D7B98A",   # pale sandstone / bone
     "rock_shadow":  "#5C3A2E",   # deep oxide / underplane
-    # Foliage — desaturated. Pine darker than bush.
+    # Foliage — desaturated Firewatch palette. Pine darker than bush.
     "foliage_pine": "#3D5A4A",
     "foliage_bush": "#7A8C5C",
+    # Foliage — saturated stylized-pack palette (Genshin / Sable read).
+    # Use for fantasy / cartoon scenes; mix freely with the rock palette.
+    "foliage_apple":    "#7DC267",   # bright apple green
+    "foliage_mint":     "#A0DFC8",   # soft mint cyan
+    "foliage_amber":    "#E89B3F",   # warm amber-orange
+    "foliage_rose":     "#D67BA8",   # rose pink
+    "foliage_amethyst": "#9E72BC",   # saturated purple
+    "foliage_lemon":    "#E8D964",   # warm yellow
+    "foliage_coral":    "#E0735C",   # coral
     # Ground.
     "ground_sand":  "#D9B884",
     "ground_grass": "#8A9462",
