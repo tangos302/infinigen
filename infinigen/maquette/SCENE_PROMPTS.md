@@ -140,6 +140,28 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 8 — re-run "medieval village by a stream" with WaterSurface
+
+Built 2026-04-28 after shipping LowPolyWaterSurfaceFactory. The stream
+that was the dominant missing element in Attempts 1 & 7 is now in
+the scene.
+
+- ✅ Stream cutting through (40m × 2.4m, slight rotation for meander)
+- ✅ Lake bulge on the east end (where stream "widens")
+- ✅ Boulders along the banks as natural riprap
+- ✅ Everything from Attempt 7 (houses, trees, fences, lanterns,
+     barrels, crates)
+- Saved: `_artifacts/maquette/prompt_medieval_village_v3.{png,blend}`
+
+**Result**: scene reads as "medieval village by a stream" — the
+narrative goal of the original prompt. Empirical loop closes for
+this prompt category.
+
+**Remaining gaps for this prompt**: Bridge (to span the stream),
+Path (dirt paths between buildings), Well, Signpost. Bridge is
+the next obvious unlock — without it, the houses on opposite
+banks have no narrative connection.
+
 ### Attempt 7 — re-run "medieval village" with Tier-1 factories built
 
 Built 2026-04-28 via headless Blender, after shipping LanternPost,
