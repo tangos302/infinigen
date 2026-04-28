@@ -34,7 +34,6 @@ from mathutils import Quaternion, Vector
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil
 
-from ...lowpoly import flat_shade
 from ...materials import apply_palette
 
 
@@ -206,28 +205,33 @@ def _add_pine_foliage(
     layers: int,
     icosphere_subdivisions: int,
     rng: random.Random,
+    smooth_shade: bool = True,
 ):
     """Stack `layers` squashed icospheres up from `crown_position` to form a
     pine-cone-shaped foliage volume. All geometry is appended to `target`'s
-    mesh as a SINGLE OBJECT (not instanced). Pure Firewatch-style
-    deformed-balloon foliage."""
-    # Operate on the existing mesh data to keep one object
+    mesh as a SINGLE OBJECT (not instanced).
+
+    smooth_shade=True marks the new foliage faces as smooth-shaded directly
+    on bmesh (face.smooth = True). The trunk faces — already in the mesh
+    from the skin modifier — keep their flat shading. Result: hard
+    silhouette + smooth foliage, the Sable / stylized-pack read.
+    smooth_shade=False keeps everything flat for the original Firewatch
+    faceted look."""
     bm = bmesh.new()
     bm.from_mesh(target.data)
+    bm.faces.ensure_lookup_table()
 
-    # Each layer: one squashed icosphere, narrower as we go up
     z_per_layer = crown_height / max(layers, 1)
     for i in range(layers):
         t = i / max(layers - 1, 1)
         z = crown_position.z + i * z_per_layer
-        # Tapering radius (wide at bottom, narrow at top)
         rxy = crown_radius * (1.0 - 0.55 * t)
-        rz = z_per_layer * 0.7  # shallow
-        # Slight per-layer position jitter
+        rz = z_per_layer * 0.7
         jx = rng.uniform(-0.1, 0.1) * crown_radius
         jy = rng.uniform(-0.1, 0.1) * crown_radius
         center = Vector((crown_position.x + jx, crown_position.y + jy, z + rz))
 
+        prev_face_count = len(bm.faces)
         result = bmesh.ops.create_icosphere(
             bm, subdivisions=icosphere_subdivisions, radius=1.0
         )
@@ -236,6 +240,11 @@ def _add_pine_foliage(
             v.co.x = v.co.x * rxy + center.x
             v.co.y = v.co.y * rxy + center.y
             v.co.z = v.co.z * rz + center.z
+
+        if smooth_shade:
+            bm.faces.ensure_lookup_table()
+            for j in range(prev_face_count, len(bm.faces)):
+                bm.faces[j].smooth = True
 
     bm.to_mesh(target.data)
     bm.free()
@@ -308,6 +317,7 @@ class NativeLowPolyTreeFactory(AssetFactory):
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
         foliage_icosphere_subdivisions: int = 1,
+        smooth_foliage: bool = True,
         target_polys: int | None = None,
         palette_color: str | None = "foliage_pine",
         coarse: bool = False,
@@ -330,6 +340,7 @@ class NativeLowPolyTreeFactory(AssetFactory):
         self.foliage_radius = foliage_radius
         self.foliage_height = foliage_height
         self.foliage_icosphere_subdivisions = foliage_icosphere_subdivisions
+        self.smooth_foliage = smooth_foliage
         self.target_polys = target_polys
         self.palette_color = palette_color
 
@@ -384,9 +395,12 @@ class NativeLowPolyTreeFactory(AssetFactory):
             layers=self.foliage_layers,
             icosphere_subdivisions=self.foliage_icosphere_subdivisions,
             rng=rng,
+            smooth_shade=self.smooth_foliage,
         )
 
-        # Optional polycount cap
+        # Optional polycount cap. Decimate COLLAPSE preserves face.smooth
+        # flags through merges (new faces inherit from neighbors), so the
+        # smooth-foliage / flat-trunk split survives this step.
         if self.target_polys is not None and self.target_polys > 0:
             current = max(len(obj.data.polygons), 1)
             if current > self.target_polys:
@@ -399,7 +413,12 @@ class NativeLowPolyTreeFactory(AssetFactory):
                     apply=True,
                 )
 
-        flat_shade(obj)
+        # NOTE: deliberately do NOT call flat_shade(obj) here — that would
+        # set use_smooth=False on every poly, including foliage faces we
+        # just marked smooth in _add_pine_foliage. The skin modifier output
+        # is already flat, and the foliage faces carry their smooth flag
+        # explicitly. Calling flat_shade would defeat smooth_foliage=True.
+
         if self.palette_color is not None:
             apply_palette(obj, self.palette_color)
         return obj
