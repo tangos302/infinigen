@@ -1,56 +1,73 @@
 """Maquette terrain — SDF-driven procedural ground meshes.
 
-Why a separate `terrain` subpackage instead of folding into `factories/`:
-the asset factories are small bmesh constructions (10–1000 faces); terrain
-is a single large mesh (10k–500k faces) built by sampling a 3D signed
-distance field and marching cubes. Different sampling strategy,
-different polycount budget, and the terrain has to land BEFORE asset
-placement so factories can scatter on top of the actual surface.
+Terrain is composed in two layers: a `base` (biome — desert, ocean, alpine,
+rolling hills) provides the starting ground field, and a list of `features`
+(Gorge, MesaCluster, MountainPeak, Lake, CaveSystem, IslandCluster, Cliff)
+mutate it via signed-distance set ops.
 
 Public surface:
 
-    from infinigen.maquette.terrain import sdf, build, LowPolyTerrainFactory
+    from infinigen.maquette.terrain import (
+        LowPolyTerrainFactory,
+        # Bases
+        DesertBase, OceanBase, RollingHillsBase, AlpineBase,
+        # Features — subtractive
+        Gorge, Lake, CaveSystem,
+        # Features — additive
+        MesaCluster, IslandCluster, MountainPeak, Cliff,
+        # SDF library (low-level)
+        sdf,
+        # Mesh helpers
+        build_mesh, mesh_to_blender, surface_height_at,
+    )
 
-`sdf` — composable signed-distance primitives + ops (box, sphere, plane,
-        capsule, union, subtract, translate, smooth_union, …).
-`build` — sample an SDF over a 3D grid and run marching-cubes; returns
-          (verts, faces) numpy arrays.
-`LowPolyTerrainFactory` — AssetFactory subclass that drops a terrain
-                          mesh into the scene at instantiation time.
+Asset placement: after `create_asset`, the factory exposes
+`height_fn(x, y)` for surface lookups, plus `scatter_zones` (place HERE)
+and `keep_out_zones` (avoid HERE) — derived from the features list.
 """
 
-from .factory import LowPolyTerrainFactory
-from .marching import build_mesh, mesh_to_blender, surface_height_at
-from .sdf import (
-    SDF,
-    Vec3,
-    box,
-    capsule,
-    cylinder,
-    height_field,
-    line_xy,
-    perlin_2d,
-    plane,
-    sphere,
-    smooth_subtract,
-    smooth_union,
+from . import sdf  # re-export the SDF library as a submodule
+from .bases import (
+    AlpineBase,
+    DesertBase,
+    OceanBase,
+    RollingHillsBase,
+    TerrainBase,
+    base_from_name,
 )
+from .composition import BaseSpec, FeatureSpec, HeightFn
+from .factory import LowPolyTerrainFactory
+from .features import (
+    CaveSystem,
+    Cliff,
+    Gorge,
+    IslandCluster,
+    Lake,
+    MesaCluster,
+    MountainPeak,
+)
+from .marching import build_mesh, mesh_to_blender, surface_height_at
 
 __all__ = [
+    "AlpineBase",
+    "BaseSpec",
+    "CaveSystem",
+    "Cliff",
+    "DesertBase",
+    "FeatureSpec",
+    "Gorge",
+    "HeightFn",
+    "IslandCluster",
+    "Lake",
     "LowPolyTerrainFactory",
-    "SDF",
-    "Vec3",
-    "box",
+    "MesaCluster",
+    "MountainPeak",
+    "OceanBase",
+    "RollingHillsBase",
+    "TerrainBase",
+    "base_from_name",
     "build_mesh",
-    "capsule",
-    "cylinder",
-    "height_field",
-    "line_xy",
     "mesh_to_blender",
-    "perlin_2d",
-    "plane",
-    "smooth_subtract",
-    "smooth_union",
-    "sphere",
+    "sdf",
     "surface_height_at",
 ]
