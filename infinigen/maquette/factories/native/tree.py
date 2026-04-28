@@ -519,7 +519,10 @@ class NativeLowPolyTreeFactory(AssetFactory):
         trunk_height: float = 6.0,
         trunk_segments: int = 7,
         trunk_radius_base: float = 0.18,
-        trunk_radius_top: float = 0.025,
+        # Larger trunk_radius_top reduces the visible diameter
+        # discontinuity where the thin trunk meets the wide foliage
+        # blob — closes the "thin pole-into-balloon" floaty look.
+        trunk_radius_top: float = 0.06,
         n_branch_layers: int = 6,
         branches_per_layer: tuple[int, int] = (3, 5),
         branch_length: tuple[float, float] = (0.7, 1.6),
@@ -531,7 +534,11 @@ class NativeLowPolyTreeFactory(AssetFactory):
         foliage_layers: int = 4,
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
-        foliage_icosphere_subdivisions: int = 1,
+        # subdivisions=2 → 320 polys per icosphere (was 80 at 1).
+        # Smooth-shaded normal interpolation needs the extra verts to
+        # avoid visible facets on the silhouette curve. Crystal
+        # archetype keeps its angular look regardless via flat shading.
+        foliage_icosphere_subdivisions: int = 2,
         smooth_foliage: bool = True,
         target_polys: int | None = None,
         trunk_color: str | None = "rock_shadow",
@@ -602,14 +609,15 @@ class NativeLowPolyTreeFactory(AssetFactory):
     def _build(self) -> bpy.types.Object:
         rng = random.Random(self.factory_seed)
 
-        # The trunk skeleton stops a small distance INSIDE the foliage
-        # volume so the trunk top is never visually exposed regardless
-        # of which foliage archetype the caller picks (umbrella ends
-        # earlier than crystal etc.). The user's `trunk_height`
-        # parameter becomes the total conceptual tree height; the
-        # actual skeleton is shorter.
+        # The trunk skeleton extends DEEP INTO the foliage volume (about
+        # halfway up the foliage) so the trunk-foliage join feels
+        # integrated, not "blob-floating-above-pole". The visible trunk
+        # top inside foliage is hidden by the colored foliage material.
+        # Was previously a much shallower overlap (min(0.6,
+        # foliage_height * 0.3) ≈ 0.6 m); 0.5x foliage_height is enough
+        # to bury the trunk top for any sensible foliage proportion.
         crown_z_base = self.trunk_height * self.crown_z_fraction
-        trunk_skel_height = crown_z_base + min(0.6, self.foliage_height * 0.3)
+        trunk_skel_height = crown_z_base + min(self.foliage_height * 0.5, 1.5)
 
         skeleton = _build_pine_skeleton(
             rng=rng,
