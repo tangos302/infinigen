@@ -7,5 +7,6 @@ geometry-finalize phase to produce low-poly, faceted output.
 """
 
 from .boulder import LowPolyBoulderFactory
+from .tree import LowPolyTreeFactory
 
-__all__ = ["LowPolyBoulderFactory"]
+__all__ = ["LowPolyBoulderFactory", "LowPolyTreeFactory"]
