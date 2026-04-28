@@ -89,6 +89,84 @@ Built 2026-04-28 via MCP:
 implied by the prompt's narrative but invisible — every signature
 prop is missing.
 
+### Attempt 3 — "Wild West frontier town main street"
+
+Built 2026-04-28 via MCP:
+- ✅ 6 buildings (saloon=longhouse, bank/sheriff=cottages, store=longhouse,
+  water tower=tower compromise, stables=barn)
+- ✅ 6 sparse trees on outskirts, 8 boulders
+- Saved: `_artifacts/maquette/prompt_western.{png,blend}`
+
+**Gaps hit (10):** Boardwalk, HitchingPost, Wagon, Windmill,
+Tumbleweed, Fence, Barrel, Crate, LanternPost, WaterTower.
+
+NEW factories discovered: `LowPolyBoardwalkFactory`,
+`LowPolyWagonFactory`, `LowPolyTumbleweedFactory`,
+`LowPolyWaterTowerFactory`.
+
+### Attempt 4 — "lakeside fishing village"
+
+- ✅ 5 houses, 8 reed-archetype trees on the bank, 6 boulders
+- Saved: `_artifacts/maquette/prompt_fishing_village.{png,blend}`
+
+**Gaps hit (8):** WaterSurface, Pier, Boat, FishingNet, Buoy,
+LanternPost, Barrel, Fence.
+
+NEW factories discovered: `LowPolyFishingNetFactory`,
+`LowPolyBuoyFactory`.
+
+### Attempt 5 — "fantasy mountain monastery"
+
+- ✅ Monastery (tower + 2 longhouse wings), 8 sparse pines, 12 boulders as scree
+- Saved: `_artifacts/maquette/prompt_monastery.{png,blend}`
+
+**Gaps hit (8):** Mountain, StonePath, Statue, PrayerFlag, Column,
+Brazier, Arch, Bell.
+
+NEW factories discovered: `LowPolyMountainFactory`,
+`LowPolyStonePathFactory`, `LowPolyPrayerFlagFactory`,
+`LowPolyColumnFactory`, `LowPolyBrazierFactory`, `LowPolyBellFactory`.
+
+### Attempt 6 — "ancient ruins at edge of forest"
+
+- ✅ 3 hacked "ruined" houses (flat roof + low walls + no chimney), 15
+  trees forming forest edge, 15 boulders as scattered masonry
+- Saved: `_artifacts/maquette/prompt_ruins.{png,blend}`
+
+**Gaps hit (8):** Arch, Column, BrokenWall, Monolith, Vine,
+Tombstone, Altar, Rubble.
+
+NEW factories discovered: `LowPolyBrokenWallFactory`,
+`LowPolyVineFactory`, `LowPolyTombstoneFactory`,
+`LowPolyAltarFactory`, `LowPolyRubbleFactory`.
+
+### Cross-attempt frequency (6 attempts)
+
+| Factory | Attempts where it's missing |
+|---|---|
+| LowPolyFenceFactory | medieval, western, fishing, monastery (4) |
+| LowPolyLanternPostFactory | medieval, campsite, western, fishing, monastery (5) |
+| LowPolyBarrelFactory | medieval, campsite, western, fishing (4) |
+| LowPolyCrateFactory | medieval, campsite, western (3) |
+| LowPolyWaterSurfaceFactory | medieval, fishing (2) |
+| LowPolyArchFactory | monastery, ruins (2) |
+| LowPolyColumnFactory | monastery, ruins (2) |
+| (others) | 1 |
+
+**Implementation priority based on actual data**:
+1. **LanternPost** (5/6 — exterior lighting is universal)
+2. **Fence** (4/6 — second most universal)
+3. **Barrel** (4/6)
+4. **Crate** (3/6)
+5. **WaterSurface** (2/6 but high narrative weight)
+6. **Arch + Column** (2/6 each, often paired)
+7. (then everything else)
+
+This contradicts what I'd have guessed without the empirical attempts —
+LanternPost was tier 1 in the original list but I'd have guessed Fence
+was the single biggest unlock. Both matter, but lanterns appear in more
+attempt categories.
+
 ### Imagined prompts (not yet built — same methodology applies)
 
 The prompts below are reasoned about but not yet built via MCP. Each
@@ -586,6 +664,262 @@ head_color  : str = "rust_metal"        slot 1
 Slots: 2. Polycount: ~25.
 
 ### `LowPolyHitchingPostFactory`
+
+Two short vertical posts with a horizontal rail between — for
+hitching horses outside saloons. Trivially small, but distinct.
+**Empirically confirmed** in Wild West attempt.
+
+```
+length     : float = 2.0
+post_height : float = 1.2
+rail_height : float = 0.9
+n_rails    : int = 1                     1 or 2 stacked rails
+
+wood_color : str = "wood"
+```
+
+Slots: 1. Polycount: ~10.
+
+---
+
+## Specs · Tier 4 (discovered in attempts 3–6)
+
+Concise specs — same shape as Tiers 1–3, just shorter for second-pass
+factories. Expand as they're implemented.
+
+### `LowPolyBoardwalkFactory`
+
+Raised wooden plank sidewalk in front of buildings. Frontier-town
+staple.
+
+```
+length, width = 6.0, 1.6
+height = 0.25                 raise off the dirt
+plank_count = 14
+post_count = 4                support posts under the deck
+has_railings : bool = False
+
+deck_color = "wood"; post_color = "rock_shadow"
+```
+
+Slots: 2. Polycount: ~40.
+
+### `LowPolyWagonFactory`
+
+Covered wagon / chuck wagon / cart. 4 wheels + box body + canopy
+hoops.
+
+```
+wagon_archetype : str = "covered"      "covered", "cart", "chuck"
+length = 2.5; width = 1.4; height = 1.4
+has_canopy : bool = True               curved hoops + cloth
+n_wheels = 4
+wheel_radius = 0.45
+
+body_color = "wood"
+wheel_color = "rock_shadow"
+canopy_color = "stucco"
+```
+
+Slots: 3. Polycount: ~80.
+
+### `LowPolyTumbleweedFactory`
+
+Big tangled dry-bush ball that rolls. Could be a `bush` archetype on
+NativeLowPolyTreeFactory but the trunk is wrong; cleaner as its own.
+
+```
+radius = 0.6; n_clumps = 4               internal small icospheres
+bumpiness = 0.2
+
+color = "rock_warm"                     a warm tan
+```
+
+Slots: 1. Polycount: ~30.
+
+### `LowPolyWaterTowerFactory`
+
+Stilted tank — 4 legs supporting a cylindrical or conical tank with a
+small roof. Common in westerns.
+
+```
+tank_archetype : str = "cylindrical"     "cylindrical", "conical"
+tank_radius = 1.6; tank_height = 2.4
+leg_height = 4.0; n_legs = 4
+has_roof = True
+ladder_visible : bool = True             single ladder strip
+
+tank_color = "wood"; leg_color = "wood"; roof_color = "rock_shadow"
+```
+
+Slots: 2-3. Polycount: ~80.
+
+### `LowPolyFishingNetFactory`
+
+A drying net hung between two posts. Geometry: 2 posts + a low-poly
+mesh "drape" between them.
+
+```
+length = 2.5; height = 1.4
+post_radius = 0.05
+mesh_density = "low"                     visible only as silhouette
+
+post_color = "wood"; net_color = "stucco"
+```
+
+Slots: 2. Polycount: ~20.
+
+### `LowPolyBuoyFactory`
+
+Floating marker. Cone or cylinder with a top cap, sits on water
+surface.
+
+```
+buoy_archetype : str = "cone"            "cone", "barrel"
+size = 0.4
+
+body_color = "accent_red"; cap_color = "stucco"
+```
+
+Slots: 2. Polycount: ~10.
+
+### `LowPolyMountainFactory`
+
+Procedural mountain backdrop — tall cone with horizontal banding +
+optional snow cap. Already exists in spirit (we built Mt Mindolluin
+for the Minas Tirith scene long ago); promote that into a factory.
+
+```
+height = 50.0; base_radius = 30.0
+sides = 16; bands = 8
+snow_threshold = 0.7                     fraction of height
+ridge_amount = 0.13                      vertical-rib displacement amplitude
+
+rock_color = "rock_cool"; snow_color = "stucco"
+```
+
+Slots: 2. Polycount: ~250.
+Implementation note: Mt Mindolluin code in legacy citadel scene is
+the exact algorithm; just port it.
+
+### `LowPolyStonePathFactory`
+
+Switchback stone steps for monastery / temple ascent. Could be
+archetype of LowPolyPathFactory (`path_archetype="stone_steps"`) once
+that lands.
+
+### `LowPolyPrayerFlagFactory`
+
+String of cloth squares hung between two posts. Five colored squares
+in tibetan-flag order.
+
+```
+length = 4.0
+flag_count = 5
+flag_size = 0.4
+
+post_color = "wood"
+flag_colors : list[str] = ["accent_red", "foliage_apple", "foliage_amber",
+                           "foliage_amethyst", "foliage_mint"]
+```
+
+Slots: 6 (one per flag color + posts). Polycount: ~25.
+
+### `LowPolyColumnFactory`
+
+Stone pillar — cylindrical with optional capital + base, optionally
+broken / fallen. Distinct from Monolith because columns are
+architectural elements (often paired, often supporting something).
+
+```
+column_archetype : str = "doric"          "doric", "ionic", "rough"
+height = 4.0; radius = 0.4
+n_sides = 12
+has_capital = True; has_base = True
+state : str = "upright"                   "upright", "fallen", "broken"
+
+stone_color = "rock_pale"
+```
+
+Slots: 1-2. Polycount: ~40.
+
+### `LowPolyBrazierFactory`
+
+Fire bowl on a pedestal. Could be sub-archetype of LanternPost
+(`lantern_archetype="brazier"`).
+
+### `LowPolyBellFactory`
+
+Bronze bell on a wooden frame. Two posts + crossbeam + bell.
+
+```
+bell_size = 0.8; frame_height = 2.2
+clapper_visible : bool = False
+
+bell_color = "rust_metal"; frame_color = "wood"
+```
+
+Slots: 2. Polycount: ~30.
+
+### `LowPolyBrokenWallFactory`
+
+Ruined wall fragment — a partial-height wall with jagged top edge.
+Better than the "flat-roof short cottage" hack used in Attempt 6.
+
+```
+length = 4.0; height = 1.5            average; varies along length
+thickness = 0.4
+crumble_seed : int                    drives the jagged top profile
+n_segments = 6                        horizontal segments with varying heights
+
+stone_color = "rock_pale"
+moss_color : str | None = "foliage_pine"   slot 1, optional
+```
+
+Slots: 1-2. Polycount: ~40.
+
+### `LowPolyVineFactory`
+
+Ivy / vines — a thin strip of leaf-cluster-blobs along a curve, used
+to drape over walls and ruins.
+
+```
+length = 3.0
+density = 12                          leaf clumps per unit
+thickness = 0.15
+
+leaf_color = "foliage_pine"
+```
+
+Slots: 1. Polycount: ~50.
+
+### `LowPolyTombstoneFactory`
+
+Standing stone marker — sub-archetype of `LowPolyMonolithFactory`
+with `monolith_archetype="tombstone"` (smaller, often rounded top).
+Won't need its own factory.
+
+### `LowPolyAltarFactory`
+
+Stone slab on stepped base. Sacrificial / ritual altar.
+
+```
+slab_w, slab_d, slab_h = 1.6, 0.8, 0.2
+n_steps = 2; step_height = 0.25
+
+stone_color = "rock_pale"
+accent_color : str | None = "accent_red"   slot 1, blood/embers
+```
+
+Slots: 1-2. Polycount: ~30.
+
+### `LowPolyRubbleFactory`
+
+Pile of broken masonry chunks. Better as `LowPolyBoulderFactory`
+archetype (`shape_archetype="masonry"`) — angular faces instead of
+organic ones — than its own factory.
+
+### `LowPolyWellFactory`
 
 Two short vertical posts with a horizontal rail between — for
 hitching horses outside saloons. Trivially small, but distinct.
