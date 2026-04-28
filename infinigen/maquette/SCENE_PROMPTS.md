@@ -140,6 +140,53 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 11 — "lively medieval marketplace at midday"
+
+Built 2026-04-28 via headless Blender. Customer prompt: "lively
+medieval marketplace square at midday — stalls, banners, people
+bustling. Sun directly overhead".
+
+- ✅ 7 buildings around a 16×16m dirt square (cottage/longhouse/
+     tower/barn/cabin variants)
+- ✅ Stone-round well as central focal point
+- ✅ 4 iron-post lanterns at the cardinal corners
+- ✅ Picket fences improvised as stall fronts (6 stalls)
+- ✅ Crates + barrels as merchandise around stalls
+- ✅ Trees on the periphery, dirt-coloured square ground
+- Saved: `_artifacts/maquette/prompt_marketplace.{png,blend}`
+
+**Result**: scene reads as "village around a well", NOT "marketplace".
+The picket+crate combo doesn't suggest "stalls" because the iconic
+market tell is the AWNING (the cloth canopy over each stall) — a
+silhouette feature we have no factory for. Banners hanging from
+buildings are equally critical for the festive read.
+
+**Gaps hit (8):**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyStallFactory` | THE marketplace identifier — wood frame + cloth awning |
+| `LowPolyBannerFactory` | hanging/vertical banners + flags |
+| `LowPolyTentFactory` | also relevant to campsite (Attempt 2 gap) |
+| `LowPolySackFactory` | grain/flour sacks; different shape than crate/barrel |
+| `LowPolyBasketFactory` | woven baskets for fruits / produce |
+| `LowPolyRugFactory` | rolled or laid carpets / textiles for wares |
+| `LowPolyTableFactory` | flat-top trestle table for goods (Crate archetype variant?) |
+| `LowPolyShopSignFactory` | hanging painted sign over doors (also Wild West) |
+
+NEW factories surfaced this attempt:
+`LowPolyStallFactory`, `LowPolyBannerFactory`,
+`LowPolySackFactory`, `LowPolyBasketFactory`,
+`LowPolyRugFactory`, `LowPolyTableFactory`,
+`LowPolyShopSignFactory`.
+
+(`LowPolyTentFactory` was already on the campsite-attempt list.)
+
+Top priority: **StallFactory** — the awning silhouette is THE
+visual marketplace tell, and the same geometry is reusable for
+food stalls, fishmonger stalls, fortune-teller booths, etc.
+Banner is second-priority — equally iconic but cheaper geometry.
+
 ### Attempt 10 — re-run farmstead with Haystack/Well/Windmill
 
 Built 2026-04-28 after shipping the 3 newly-spec'd Tier-5 factories.
@@ -1070,6 +1117,140 @@ roof_color  : str = "rock_shadow"
 ```
 
 Slots: 3. Polycount: ~50.
+
+---
+
+## Specs · Tier 6 (discovered in attempt 11 — marketplace)
+
+### `LowPolyStallFactory`
+
+Marketplace stall — wooden frame + cloth awning canopy over a
+display surface. Single iconic asset; same geometry reused for
+food, fish, textile, fortune-teller, etc.
+
+```
+stall_archetype : str = "open"          "open", "closed_back", "double"
+length, width   : float = 1.6, 1.0
+awning_height   : float = 1.7
+awning_pitch    : float = 0.4           sloped roof, front lower than back
+n_posts         : int = 4               (or 6 for "double")
+has_table       : bool = True           wooden flat surface inside
+has_back_wall   : bool = False          if "closed_back"
+
+frame_color  : str = "wood"             slot 0
+awning_color : str = "accent_red"       slot 1 (varied per stall)
+table_color  : str = "wood"             slot 2 (default same as frame)
+```
+
+Slots: 2–3. Polycount: ~30. Implementation: 4 thin vertical posts
++ a sloped awning quad on top + optional flat table. The awning
+is the silhouette — it should overhang both front and sides
+slightly (~0.15m).
+
+### `LowPolyBannerFactory`
+
+A hanging cloth banner — vertical (long-aspect) or horizontal
+(square-aspect), with optional pole and crossbar.
+
+```
+banner_archetype : str = "hanging"      "hanging", "flag_pole", "horizontal"
+length, width    : float                varies by archetype
+pole_height      : float = 2.5          for "flag_pole"
+has_crossbar     : bool = False         T-cross for "hanging"
+n_segments       : int = 3              vertical wave subdivisions
+
+cloth_color : str = "accent_red"        slot 0 — high contrast for festive read
+pole_color  : str = "wood"              slot 1
+```
+
+Slots: 2. Polycount: ~12. The cloth is a flat quad with slight
+Y-offset on alternating verts to suggest "hanging in air" without
+animation.
+
+### `LowPolySackFactory`
+
+A bulging cloth sack — flour, grain, salt. Different silhouette
+than crates/barrels.
+
+```
+sack_archetype : str = "round_top"      "round_top", "tied_top"
+height, radius : float = 0.55, 0.25
+n_sides        : int = 6
+has_tied_neck  : bool = True            small narrowed top
+
+sack_color : str = "stucco"             slot 0
+tie_color  : str = "wood"               slot 1 — rope tie (optional)
+```
+
+Slots: 1–2. Polycount: ~20. Implementation: cylinder with top ring
+narrowed to ~30% radius for the bulging-sack silhouette.
+
+### `LowPolyBasketFactory`
+
+A woven basket — round bowl or rectangular crate-sized container.
+
+```
+basket_archetype : str = "round"        "round", "rectangular"
+radius, height : float = 0.35, 0.30     for "round"
+size           : tuple = (0.5, 0.4, 0.25) for "rectangular"
+has_handle     : bool = True            arched bowed handle on top
+
+basket_color : str = "wood"             slot 0
+```
+
+Slots: 1. Polycount: ~30. Cylinder/box with hollow top, plus optional
+torus handle approximated as 4–6 box segments.
+
+### `LowPolyRugFactory`
+
+A flat rectangular rug — laid out for wares, or rolled up.
+
+```
+rug_archetype : str = "flat"            "flat", "rolled"
+length, width : float = 1.5, 1.0
+thickness     : float = 0.04
+has_border_pattern : bool = True        2nd material slot for trim
+
+rug_color    : str = "accent_red"       slot 0
+border_color : str = "foliage_lemon"    slot 1 (optional contrast trim)
+```
+
+Slots: 1–2. Polycount: ~6. Just a flat box with optional border
+strips (4 thin perimeter boxes). Rolled = small cylinder.
+
+### `LowPolyShopSignFactory`
+
+A painted shop sign hanging from a wall bracket or pole.
+
+```
+sign_archetype : str = "hanging"        "hanging", "above_door"
+size : tuple = (0.6, 0.5)
+has_bracket : bool = True               L-shaped wall bracket
+
+sign_color    : str = "wood"
+bracket_color : str = "rust_metal"
+text_color    : str = "accent_red"      slot 2 — implied text patch
+```
+
+Slots: 2–3. Polycount: ~15. Flat sign quad + thin bracket arm + 1–2
+chains/rings to "hang" (just thin boxes).
+
+### `LowPolyTableFactory`
+
+Trestle / market table. Could fold into Crate as `crate_archetype="trestle_table"`
+since geometry is similar.
+
+```
+size : tuple = (1.5, 0.7, 0.85)
+n_legs : int = 4
+top_thickness : float = 0.06
+
+wood_color : str = "wood"
+```
+
+Slots: 1. Polycount: ~30. 4 legs + a flat top.
+
+May fold into Crate.
 
 ---
 
