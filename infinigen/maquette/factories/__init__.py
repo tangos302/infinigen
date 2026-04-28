@@ -39,6 +39,7 @@ from .native import (
     LowPolyHouseFactory,
     LowPolyLanternPostFactory,
     LowPolyWaterSurfaceFactory,
+    LowPolyWellFactory,
     NativeLowPolyTreeFactory,
 )
 from .tree import LowPolyTreeFactory
@@ -53,5 +54,6 @@ __all__ = [
     "LowPolyLanternPostFactory",
     "LowPolyTreeFactory",
     "LowPolyWaterSurfaceFactory",
+    "LowPolyWellFactory",
     "NativeLowPolyTreeFactory",
 ]
