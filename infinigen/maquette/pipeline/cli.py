@@ -41,7 +41,8 @@ import datetime as dt
 import sys
 from pathlib import Path
 
-from . import gap_tracker, runner, executor
+from . import gap_tracker, runner, executor, implementer
+from .factories_guide import write_guide
 
 
 DEFAULT_RUNS_ROOT = (
@@ -129,11 +130,58 @@ def main(argv: list[str] | None = None) -> int:
         print("[maquette] --no-render set, stopping after script generation.")
         return 0
 
-    if args.local:
+    # Phase 2 — local-mode auto-fix of missing factories.
+    if args.local and result.requested_assets:
         print(
-            "[maquette] WARNING: --local mode not implemented in phase 1. "
-            "Running the build script as-is; missing factories will fail."
+            f"[maquette] --local: implementing "
+            f"{len(result.requested_assets)} missing factor(y/ies) before render."
         )
+        impl_log_dir = args.out / "implementations"
+        impl_log_dir.mkdir(exist_ok=True)
+        n_ok = 0
+        for raw_line in result.requested_assets:
+            name, spec = gap_tracker._parse_request_line(raw_line)
+            if not name:
+                continue
+            print(f"[maquette]   → {name}")
+            r = implementer.implement_factory(
+                name, spec, model=args.model, timeout_seconds=args.timeout * 3,
+            )
+            (impl_log_dir / f"{name}.log").write_text(r.output)
+            if r.success:
+                print(f"[maquette]     OK")
+                n_ok += 1
+            else:
+                print(f"[maquette]     FAILED (see {name}.log)")
+        # Regenerate catalog so the next runner.generate() call sees the
+        # newly-built factories.
+        if n_ok:
+            print("[maquette] regenerating FACTORIES_GUIDE.md…")
+            write_guide()
+            # Re-run the original prompt so Claude can use the new factories.
+            print("[maquette] regenerating build script with expanded catalog…")
+            try:
+                result = runner.generate(
+                    args.prompt,
+                    model=args.model,
+                    timeout_seconds=args.timeout,
+                    regenerate_guide=False,   # already regenerated
+                )
+            except Exception as e:
+                print(f"[maquette] regeneration failed: {e}", file=sys.stderr)
+                return 2
+            (args.out / "raw_response_v2.md").write_text(result.raw_response)
+            build_py.write_text(result.extracted_script)
+            (args.out / "requested_assets_v2.txt").write_text(
+                "\n".join(result.requested_assets)
+                + ("\n" if result.requested_assets else "")
+            )
+            if result.requested_assets:
+                gap_tracker.append(result.requested_assets)
+                print(
+                    f"[maquette] note: {len(result.requested_assets)} new "
+                    f"requested asset(s) on second pass — left in tracker."
+                )
 
     print(f"[maquette] running build via Blender ({args.blender})…")
     exec_result = executor.run_build_script(

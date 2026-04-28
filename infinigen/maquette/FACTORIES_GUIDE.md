@@ -359,6 +359,33 @@ post_color: str | None = None
 lamp_color: str | None = None
 ```
 
+### `LowPolyPalmTreeFactory`
+
+LowPolyPalmTreeFactory — proper palm tree.
+
+**palm** archetypes: `coconut` / `date` / `fan_palm`
+
+**Constructor parameters:**
+```
+factory_seed
+palm_archetype: str = 'coconut'
+trunk_height: float | None = None
+trunk_base_radius: float | None = None
+trunk_top_radius: float | None = None
+trunk_segments: int | None = None
+trunk_n_sides: int | None = None
+trunk_curve: float | None = None
+trunk_curve_power: float | None = None
+n_fronds: int | None = None
+frond_length: float | None = None
+frond_base_width: float | None = None
+frond_segments: int | None = None
+frond_droop: float | None = None
+frond_pitch: float | None = None
+trunk_color: str | None = None
+frond_color: str | None = None
+```
+
 ### `LowPolyRockSpireFactory`
 
 LowPolyRockSpireFactory — tall narrow rock columns / spires / mesas.
