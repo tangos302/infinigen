@@ -140,6 +140,76 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 16 — re-run castle with crenellated walls
+
+Built 2026-04-28 after extending `LowPolyFenceFactory.stone_wall`
+with `crenellated_top: bool` + merlon parameters. Same castle
+layout as Attempt 15 but walls now have the iconic toothed
+silhouette.
+
+- ✅ All 4 curtain walls now `crenellated_top=True`, height
+     bumped to 2.4m (was 1.6m) to scale with the keep
+- ✅ Merlons evenly distributed along each wall's length
+- Saved: `_artifacts/maquette/prompt_castle_v2.{png,blend}`
+
+**Result**: scene reads as "castle" — the toothed wall silhouette
+locks it in. Major upgrade over Attempt 15's "fortified compound".
+
+**Remaining gaps** for tightening this further: castle-style flat
+tower tops with crenellation rings (towers still have pointed
+cottage roofs), drawbridge, portcullis. Diminishing-return polish —
+the wall battlements alone closed the narrative.
+
+Implementation note: extending an existing factory with one
+parameter (instead of building a new BattlementFactory) was the
+cheapest possible high-impact change. Pattern to repeat for other
+silhouette tweaks.
+
+### Attempt 15 — "small fortified keep at dawn"
+
+Built 2026-04-28. Customer prompt: "small fortified keep — central
+tower with battlements, walls around it, a gate, banners flying.
+Dawn light".
+
+- ✅ Central tower-archetype keep, scaled up 1.6×1.6×1.5
+- ✅ 4 corner towers
+- ✅ 4 stone-wall fence segments connecting the towers (curtain walls)
+- ✅ 4 inner courtyard buildings (longhouse / cottage / barn)
+- ✅ Small longhouse blocking south wall as "gatehouse"
+- ✅ 5 flag-pole banners (heraldic colours) on keep + corners
+- ✅ Iron-post lanterns at gate, stone braziers on the side walls
+- ✅ Barrels + crates as siege supplies in courtyard
+- ✅ Forest backdrop + boulder rubble at wall base
+- Saved: `_artifacts/maquette/prompt_castle.{png,blend}`
+
+**Result**: scene reads as "fortified compound" but NOT "castle" —
+the iconic CRENELLATIONS (toothed wall top) are missing. Without
+the merlons, walls look like garden walls and the towers look like
+houses with pointy roofs.
+
+**Gaps hit (8):**
+
+| Missing factory | Why |
+|---|---|
+| Crenellated wall top  | castle silhouette tell — toothed merlons on walls + tower tops |
+| `LowPolyDrawbridgeFactory` | the gate of a castle |
+| `LowPolyPortcullisFactory` | vertical iron gate grid behind drawbridge |
+| Castle-style tower roof | flat with battlements, not pointed cottage roofs |
+| `LowPolyMoatFactory` | water around the walls (could just use WaterSurface) |
+| `LowPolyArrowSlitFactory` | narrow defensive window — could be Building variant |
+| `LowPolyCannonFactory` | siege weapon (also pirate / fortress prompts) |
+| `LowPolyTrebuchetFactory` | siege engine (rare but iconic) |
+
+**Top priority**: Crenellations. Implementation: extend
+`LowPolyFenceFactory.stone_wall` with a `crenellated_top: bool`
+parameter that adds a row of merlons (small offset boxes) on the
+top edge. Same parameter on `LowPolyHouseFactory.tower` to give
+flat-topped tower with crenellation ring. Two small additions, no
+new factories — high silhouette ROI per LOC.
+
+Drawbridge + Portcullis + Moat are second-priority — the castle
+already reads with crenellations; gate is polish.
+
 ### Attempt 14 — re-run pirate cove with Boat + Deck
 
 Built 2026-04-28 after shipping LowPolyBoatFactory and

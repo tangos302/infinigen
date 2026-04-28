@@ -67,6 +67,8 @@ _ARCHETYPE_DEFAULTS = {
         post_spacing=0.5, post_radius=0.22,  # post_radius repurposed as stone size
         n_rails=0, slat_density=0.0, slat_width=0.0, slat_thickness=0.0,
         plank_thickness=0.0,
+        crenellated_top=False, merlon_height=0.4,
+        merlon_width=0.5, merlon_gap=0.4,
         wall_color="rock_pale", accent_color="rock_shadow",
     ),
     "wooden_plank": dict(
@@ -183,10 +185,17 @@ def _build_post_and_rail(
 
 def _build_stone_wall(
     bm, slot_ranges, length: float, height: float, stone_size: float,
-    rng: random.Random,
+    rng: random.Random, crenellated_top: bool = False,
+    merlon_height: float = 0.4, merlon_width: float = 0.5,
+    merlon_gap: float = 0.4,
 ) -> None:
     """A run of slightly varied stones, 1-2 layers tall. Top layer (if
-    multi-layer) goes to slot 1 as coping."""
+    multi-layer) goes to slot 1 as coping.
+
+    If `crenellated_top=True`, adds a row of merlons (rectangular tooth
+    blocks) on top of the wall — the iconic castle-battlement silhouette.
+    Merlons go to slot 1 (so they can be coloured differently from the
+    base wall if desired)."""
     n_layers = max(1, int(round(height / max(stone_size * 0.85, 0.01))))
     layer_height = height / n_layers
     for layer in range(n_layers):
@@ -204,6 +213,20 @@ def _build_stone_wall(
             cz = layer * layer_height + sz / 2
             _add_box_slot(bm, slot_ranges, slot, cx, 0, cz, sx, sy, sz)
             x += sx + stone_size * rng.uniform(0.0, 0.1)
+    # Crenellations — row of merlons on top, evenly spaced.
+    if crenellated_top:
+        period = merlon_width + merlon_gap
+        n_merlons = max(1, int(round(length / period)))
+        # Recompute spacing so merlons distribute evenly along length.
+        actual_period = length / n_merlons
+        actual_merlon_w = actual_period * (merlon_width / period)
+        for k in range(n_merlons):
+            mx = (k + 0.5) * actual_period
+            _add_box_slot(
+                bm, slot_ranges, 1,
+                mx, 0, height + merlon_height / 2,
+                actual_merlon_w, stone_size, merlon_height,
+            )
 
 
 def _build_wooden_plank(
@@ -260,6 +283,10 @@ class LowPolyFenceFactory(AssetFactory):
         slat_width: float | None = None,
         slat_thickness: float | None = None,
         plank_thickness: float | None = None,
+        crenellated_top: bool | None = None,
+        merlon_height: float | None = None,
+        merlon_width: float | None = None,
+        merlon_gap: float | None = None,
         wall_color: str | None = None,
         accent_color: str | None = None,
         coarse: bool = False,
@@ -281,6 +308,24 @@ class LowPolyFenceFactory(AssetFactory):
         self.slat_width = float(slat_width if slat_width is not None else d["slat_width"])
         self.slat_thickness = float(slat_thickness if slat_thickness is not None else d["slat_thickness"])
         self.plank_thickness = float(plank_thickness if plank_thickness is not None else d["plank_thickness"])
+        # Crenellation params only meaningful for stone_wall but exposed
+        # uniformly. Default `False` for non-stone_wall archetypes.
+        self.crenellated_top = (
+            bool(crenellated_top) if crenellated_top is not None
+            else d.get("crenellated_top", False)
+        )
+        self.merlon_height = float(
+            merlon_height if merlon_height is not None
+            else d.get("merlon_height", 0.4)
+        )
+        self.merlon_width = float(
+            merlon_width if merlon_width is not None
+            else d.get("merlon_width", 0.5)
+        )
+        self.merlon_gap = float(
+            merlon_gap if merlon_gap is not None
+            else d.get("merlon_gap", 0.4)
+        )
         self.wall_color = wall_color or d["wall_color"]
         self.accent_color = accent_color or d["accent_color"]
 
@@ -313,6 +358,10 @@ class LowPolyFenceFactory(AssetFactory):
         elif self.fence_archetype == "stone_wall":
             _build_stone_wall(
                 bm, slot_ranges, self.length, self.height, self.post_radius, rng,
+                crenellated_top=self.crenellated_top,
+                merlon_height=self.merlon_height,
+                merlon_width=self.merlon_width,
+                merlon_gap=self.merlon_gap,
             )
         elif self.fence_archetype == "wooden_plank":
             _build_wooden_plank(
