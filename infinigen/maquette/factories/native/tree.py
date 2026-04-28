@@ -321,7 +321,8 @@ class NativeLowPolyTreeFactory(AssetFactory):
         branch_length: tuple[float, float] = (0.7, 1.6),
         branch_droop: tuple[float, float] = (0.10, 0.55),
         branch_taper: float = 0.5,
-        branch_lower_z_fraction: float = 0.30,
+        branch_lower_z_fraction: float | None = None,
+        crown_z_fraction: float = 0.45,
         foliage_layers: int = 4,
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
@@ -345,7 +346,16 @@ class NativeLowPolyTreeFactory(AssetFactory):
         self.branch_length = branch_length
         self.branch_droop = branch_droop
         self.branch_taper = branch_taper
-        self.branch_lower_z_fraction = branch_lower_z_fraction
+        # Default branch_lower_z_fraction to crown_z_fraction so branches
+        # only spawn inside the foliage volume by default — no exposed
+        # branches below the foliage clump. Override to push branches
+        # lower if the look calls for it.
+        self.branch_lower_z_fraction = (
+            branch_lower_z_fraction
+            if branch_lower_z_fraction is not None
+            else crown_z_fraction
+        )
+        self.crown_z_fraction = crown_z_fraction
         self.foliage_layers = foliage_layers
         self.foliage_radius = foliage_radius
         self.foliage_height = foliage_height
@@ -402,10 +412,11 @@ class NativeLowPolyTreeFactory(AssetFactory):
         while len(obj.data.materials) < 2:
             obj.data.materials.append(None)
 
-        # Foliage clump — top of the trunk. Place crown so its bottom layer
-        # sits roughly at the highest branch-attached trunk node and extends
-        # upward, hiding the trunk top.
-        crown_z_base = self.trunk_height * 0.55
+        # Foliage clump — bottom of the crown sits at crown_z_fraction *
+        # trunk_height. Branches are constrained to the same range
+        # (branch_lower_z_fraction defaults to this), so the foliage
+        # always covers the branchy section of the trunk.
+        crown_z_base = self.trunk_height * self.crown_z_fraction
         crown_pos = Vector((skeleton[0].position.x, skeleton[0].position.y, crown_z_base))
         trunk_count, foliage_count = _add_pine_foliage(
             obj,
