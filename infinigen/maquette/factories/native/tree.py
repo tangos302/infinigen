@@ -530,14 +530,21 @@ class NativeLowPolyTreeFactory(AssetFactory):
         branch_taper: float = 0.5,
         branch_lower_z_fraction: float | None = None,
         crown_z_fraction: float = 0.45,
-        foliage_archetype: str = "pine_cone",
+        # Default is "crystal" — angular faceted icosphere with vertical
+        # stretch. User-validated as the best showcase look (clean
+        # silhouette, sharp shadow facets, no shading artifacts at
+        # sphere overlaps). Other archetypes (pine_cone, round_ball,
+        # umbrella, bush) remain available for variety / future
+        # features but aren't the default.
+        foliage_archetype: str = "crystal",
         foliage_layers: int = 4,
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
-        # subdivisions=2 → 320 polys per icosphere (was 80 at 1).
-        # Smooth-shaded normal interpolation needs the extra verts to
-        # avoid visible facets on the silhouette curve. Crystal
-        # archetype keeps its angular look regardless via flat shading.
+        # Crystal forces flat shading so subdivision can stay low —
+        # the angular look is the point. Other archetypes that opt
+        # into smooth shading benefit from higher subdivisions; we
+        # keep this default at 2 so switching archetypes is still
+        # smooth-shading-friendly without explicit override.
         foliage_icosphere_subdivisions: int = 2,
         smooth_foliage: bool = True,
         target_polys: int | None = None,
