@@ -140,6 +140,21 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 20 — re-run temple with ToriiFactory
+
+Built 2026-04-28 after shipping LowPolyToriiFactory. Same temple
+layout as Attempt 19 but with proper torii:
+
+- ✅ Vermilion myojin torii at the entrance (red Π-shape with curved
+     end caps) replaces the cross-tombstone stand-in
+- ✅ Secondary smaller shinmei (wood) torii deeper along the path
+     for layered "approaching the shrine" feel
+- Saved: `_artifacts/maquette/prompt_temple_v2.{png,blend}`
+
+**Result**: scene reads as "Japanese temple" now — the vermilion
+torii is unambiguous. Pagoda, Toro, Bamboo gaps remain but the
+narrative closes on torii alone.
+
 ### Attempt 19 — "Asian temple compound at sunset"
 
 Built 2026-04-28. Customer prompt: "small Japanese temple compound
