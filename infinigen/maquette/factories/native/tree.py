@@ -53,6 +53,9 @@ class _SkeletonNode:
     parent: int  # index into the skeleton list, or -1 for root
 
 
+_TRUNK_ARCHETYPES = ("straight", "no_branch", "curved")
+
+
 def _build_pine_skeleton(
     rng: random.Random,
     trunk_height: float,
@@ -65,6 +68,8 @@ def _build_pine_skeleton(
     branch_droop_range: tuple[float, float],
     branch_taper: float,
     branch_lower_z_fraction: float,
+    trunk_archetype: str = "straight",
+    curve_amplitude: float = 0.5,
 ) -> list[_SkeletonNode]:
     """Pine archetype: tall straight trunk, layers of roughly-horizontal
     drooping branches stacked upward. Lower-trunk has no branches.
@@ -74,18 +79,37 @@ def _build_pine_skeleton(
     don't survive remesh anyway; the foliage clump replaces them
     visually.
     """
+    if trunk_archetype not in _TRUNK_ARCHETYPES:
+        raise ValueError(
+            f"unknown trunk_archetype {trunk_archetype!r}; "
+            f"valid: {_TRUNK_ARCHETYPES}"
+        )
+    # `no_branch` archetype: skip branch generation entirely.
+    if trunk_archetype == "no_branch":
+        n_branch_layers = 0
+
+    # `curved` archetype: pick a yaw direction once and apply a sine-wave
+    # horizontal offset along the trunk to produce an S-curve (bonsai
+    # feel). Amplitude given in metres; phase=2π gives one full S over
+    # trunk_height.
+    curved = trunk_archetype == "curved"
+    curve_yaw = rng.uniform(0, 2 * math.pi) if curved else 0.0
+
     nodes: list[_SkeletonNode] = []
 
     # --- Trunk (level 0) ---
     for i in range(trunk_segments + 1):
         t = i / trunk_segments
-        # Slight horizontal wobble, growing with height
         wobble = 0.04 * trunk_height * t
         x = rng.uniform(-wobble, wobble)
         y = rng.uniform(-wobble, wobble)
+        if curved:
+            offset = curve_amplitude * math.sin(t * 2 * math.pi)
+            x += offset * math.cos(curve_yaw)
+            y += offset * math.sin(curve_yaw)
         z = trunk_height * t
         radius = trunk_radius_base * (1 - t) + trunk_radius_top * t
-        parent = i - 1  # chain
+        parent = i - 1
         nodes.append(_SkeletonNode(Vector((x, y, z)), radius, parent))
     trunk_top_idx = len(nodes) - 1
 
@@ -490,6 +514,8 @@ class NativeLowPolyTreeFactory(AssetFactory):
         self,
         factory_seed,
         archetype: str = "pine",
+        trunk_archetype: str = "straight",
+        trunk_curve_amplitude: float = 0.5,
         trunk_height: float = 6.0,
         trunk_segments: int = 7,
         trunk_radius_base: float = 0.18,
@@ -516,6 +542,13 @@ class NativeLowPolyTreeFactory(AssetFactory):
         if archetype != "pine":
             raise ValueError(f"unsupported archetype {archetype!r}; only 'pine' for now")
         self.archetype = archetype
+        if trunk_archetype not in _TRUNK_ARCHETYPES:
+            raise ValueError(
+                f"unknown trunk_archetype {trunk_archetype!r}; "
+                f"valid: {_TRUNK_ARCHETYPES}"
+            )
+        self.trunk_archetype = trunk_archetype
+        self.trunk_curve_amplitude = trunk_curve_amplitude
         self.trunk_height = trunk_height
         self.trunk_segments = trunk_segments
         self.trunk_radius_base = trunk_radius_base
@@ -593,6 +626,8 @@ class NativeLowPolyTreeFactory(AssetFactory):
             # not the conceptual trunk_height. Recompute so branches still
             # only spawn at the upper end of the visible trunk.
             branch_lower_z_fraction=min(0.99, crown_z_base / max(trunk_skel_height, 1e-6)),
+            trunk_archetype=self.trunk_archetype,
+            curve_amplitude=self.trunk_curve_amplitude,
         )
 
         obj = _skeleton_to_skin_object(
@@ -609,10 +644,16 @@ class NativeLowPolyTreeFactory(AssetFactory):
         while len(obj.data.materials) < 2:
             obj.data.materials.append(None)
 
-        # Foliage clump — bottom of the crown sits at crown_z_fraction *
-        # trunk_height. (crown_z_base computed earlier above for the
-        # skeleton-shortening logic.)
-        crown_pos = Vector((skeleton[0].position.x, skeleton[0].position.y, crown_z_base))
+        # Foliage anchor: use the trunk-top node's horizontal position so
+        # curved trunks carry their foliage with them. crown_z_base
+        # remains based on conceptual trunk_height (the foliage's vertical
+        # placement is decoupled from the trunk's lean).
+        trunk_top_node = skeleton[self.trunk_segments]
+        crown_pos = Vector((
+            trunk_top_node.position.x,
+            trunk_top_node.position.y,
+            crown_z_base,
+        ))
         trunk_count, foliage_count = _add_foliage(
             obj,
             archetype=self.foliage_archetype,
