@@ -20,12 +20,14 @@ Eventually `LowPolyTreeFactory(species="native")` will route
 through this package.
 """
 
+from .barrel import LowPolyBarrelFactory
 from .building import LowPolyHouseFactory
 from .fence import LowPolyFenceFactory
 from .lantern_post import LowPolyLanternPostFactory
 from .tree import NativeLowPolyTreeFactory
 
 __all__ = [
+    "LowPolyBarrelFactory",
     "LowPolyFenceFactory",
     "LowPolyHouseFactory",
     "LowPolyLanternPostFactory",
