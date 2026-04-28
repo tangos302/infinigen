@@ -20,6 +20,7 @@ Eventually `LowPolyTreeFactory(species="native")` will route
 through this package.
 """
 
+from .building import LowPolyHouseFactory
 from .tree import NativeLowPolyTreeFactory
 
-__all__ = ["NativeLowPolyTreeFactory"]
+__all__ = ["LowPolyHouseFactory", "NativeLowPolyTreeFactory"]
