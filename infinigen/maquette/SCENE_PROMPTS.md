@@ -140,6 +140,29 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 10 — re-run farmstead with Haystack/Well/Windmill
+
+Built 2026-04-28 after shipping the 3 newly-spec'd Tier-5 factories.
+Same farmstead layout as Attempt 9 plus:
+
+- ✅ 6 haystacks scattered between buildings (mix of cone /
+     rounded_mound / stacked_disks; randomized scale + rotation)
+- ✅ Stone-round well in the kitchen courtyard
+- ✅ Dutch windmill on the eastern field
+
+Saved: `_artifacts/maquette/prompt_farmstead_v2.{png,blend}`.
+
+**Result**: harvest narrative reads now — yellow haystacks dominate
+the silhouette mid-scene, dutch windmill anchors the eastern field.
+Well partially hidden behind the lantern cluster (placement issue,
+not factory issue).
+
+**Remaining gaps** for this prompt: CropRowFactory (the green/yellow
+field rows are still missing — ground reads as "lawn" not "tilled"),
+ScarecrowFactory, HayBaleFactory (small bales between fields and
+barn), AgVehicleFactory (plow / cart). These are diminishing-return
+polish though — the scene already reads as a working farm.
+
 ### Attempt 9 — "small farmstead at harvest time"
 
 Built 2026-04-28 via headless Blender. Customer prompt: "small farmstead
