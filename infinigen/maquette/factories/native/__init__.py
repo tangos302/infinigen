@@ -21,10 +21,12 @@ through this package.
 """
 
 from .building import LowPolyHouseFactory
+from .fence import LowPolyFenceFactory
 from .lantern_post import LowPolyLanternPostFactory
 from .tree import NativeLowPolyTreeFactory
 
 __all__ = [
+    "LowPolyFenceFactory",
     "LowPolyHouseFactory",
     "LowPolyLanternPostFactory",
     "NativeLowPolyTreeFactory",
