@@ -33,6 +33,7 @@ fine.
 from .boulder import LowPolyBoulderFactory
 from .native import (
     LowPolyBarrelFactory,
+    LowPolyCrateFactory,
     LowPolyFenceFactory,
     LowPolyHouseFactory,
     LowPolyLanternPostFactory,
@@ -43,6 +44,7 @@ from .tree import LowPolyTreeFactory
 __all__ = [
     "LowPolyBarrelFactory",
     "LowPolyBoulderFactory",
+    "LowPolyCrateFactory",
     "LowPolyFenceFactory",
     "LowPolyHouseFactory",
     "LowPolyLanternPostFactory",

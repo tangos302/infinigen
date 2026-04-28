@@ -22,12 +22,14 @@ through this package.
 
 from .barrel import LowPolyBarrelFactory
 from .building import LowPolyHouseFactory
+from .crate import LowPolyCrateFactory
 from .fence import LowPolyFenceFactory
 from .lantern_post import LowPolyLanternPostFactory
 from .tree import NativeLowPolyTreeFactory
 
 __all__ = [
     "LowPolyBarrelFactory",
+    "LowPolyCrateFactory",
     "LowPolyFenceFactory",
     "LowPolyHouseFactory",
     "LowPolyLanternPostFactory",
