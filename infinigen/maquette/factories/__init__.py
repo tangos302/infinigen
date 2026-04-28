@@ -34,6 +34,7 @@ from .boulder import LowPolyBoulderFactory
 from .native import (
     LowPolyBannerFactory,
     LowPolyBarrelFactory,
+    LowPolyBoatFactory,
     LowPolyCrateFactory,
     LowPolyFenceFactory,
     LowPolyHaystackFactory,
@@ -50,6 +51,7 @@ from .tree import LowPolyTreeFactory
 __all__ = [
     "LowPolyBannerFactory",
     "LowPolyBarrelFactory",
+    "LowPolyBoatFactory",
     "LowPolyBoulderFactory",
     "LowPolyCrateFactory",
     "LowPolyFenceFactory",

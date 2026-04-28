@@ -46,6 +46,7 @@ MAQUETTE_PALETTE: dict[str, str] = {
     # crates, signposts, carts. Kept muted so they don't fight foliage.
     "wood":         "#6B4A2E",   # warm dark wood
     "rust_metal":   "#4A3E36",   # dark iron / oxide
+    "stucco":       "#D8C9A4",   # off-white cloth / plaster / sail
     # Ground.
     "ground_sand":  "#D9B884",
     "ground_grass": "#8A9462",

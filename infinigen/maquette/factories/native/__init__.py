@@ -22,6 +22,7 @@ through this package.
 
 from .banner import LowPolyBannerFactory
 from .barrel import LowPolyBarrelFactory
+from .boat import LowPolyBoatFactory
 from .building import LowPolyHouseFactory
 from .crate import LowPolyCrateFactory
 from .fence import LowPolyFenceFactory
@@ -36,6 +37,7 @@ from .windmill import LowPolyWindmillFactory
 __all__ = [
     "LowPolyBannerFactory",
     "LowPolyBarrelFactory",
+    "LowPolyBoatFactory",
     "LowPolyCrateFactory",
     "LowPolyFenceFactory",
     "LowPolyHaystackFactory",
