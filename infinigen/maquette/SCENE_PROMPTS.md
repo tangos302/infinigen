@@ -140,6 +140,52 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 19 — "Asian temple compound at sunset"
+
+Built 2026-04-28. Customer prompt: "small Japanese temple compound
+at sunset — torii gate at the entrance, stone lantern path, a koi
+pond, bamboo grove. Warm golden light".
+
+- ✅ Tower-archetype "pagoda" (poor stand-in — just a tower with
+     peaked roof, not multi-tiered)
+- ✅ 2 cottage outbuildings flanking the temple
+- ✅ "Torii" approximated as a vermilion-red cross tombstone
+     (close shape but wrong proportions)
+- ✅ Stone-brazier lanterns line the entrance path
+- ✅ Koi pond (still_lake water surface) on the side
+- ✅ Boardwalk bridge crossing the pond
+- ✅ "Bamboo grove" (round-ball trees with green trunks at small
+     scale) — reads as foliage but not bamboo
+- ✅ Low stone-wall boundary fences
+- ✅ Boulders as zen-garden stones
+- Saved: `_artifacts/maquette/prompt_temple.{png,blend}`
+
+**Result**: scene reads as "Asian-themed compound" but NOT
+specifically "Japanese temple" — the iconic torii gate is the
+hardest miss; the pagoda silhouette also doesn't read.
+
+**Gaps hit (6):**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyToriiFactory` | THE Japanese-temple identifier — 2 pillars + 2 horizontal beams in vermilion red |
+| `LowPolyPagodaFactory` | multi-tier curving roof silhouette (or House archetype) |
+| `LowPolyToroFactory` | Japanese stone lantern (small with peaked roof) — diff from current LanternPost |
+| `LowPolyBambooFactory` | thin segmented vertical poles — different from regular trees |
+| `LowPolyCherryBlossomFactory` | pink-foliage tree (could be palette tweak on existing tree) |
+| Raked sand pattern | shader work — not v0 |
+
+**Top priority**: ToriiFactory — simplest geometry of the bunch
+(4 boxes total) but biggest narrative weight. Build immediately.
+
+NEW factories surfaced this attempt:
+`LowPolyToriiFactory`, `LowPolyPagodaFactory`,
+`LowPolyToroFactory`, `LowPolyBambooFactory`.
+
+CherryBlossom can be solved by adding a `palette_color="foliage_rose"`
++ `umbrella` foliage variant on the existing tree factory — no
+new factory needed, just a recipe.
+
 ### Attempt 18 — re-run graveyard with TombstoneFactory
 
 Built 2026-04-28 after shipping LowPolyTombstoneFactory. Same
