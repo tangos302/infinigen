@@ -78,13 +78,27 @@ def apply_palette_slots(
     `slot_colors`. Polygons' material_index values are preserved — caller is
     responsible for having set those before/during geometry construction.
 
-    Used by factories that want per-region color (e.g. NativeLowPolyTreeFactory
-    splitting trunk from foliage). For a single-color asset, prefer
-    apply_palette() — same end result with less ceremony.
+    Important: this REPLACES existing slots in-place rather than calling
+    obj.data.materials.clear(). Clearing the materials list silently
+    resets every polygon's material_index to 0 (Blender clamps to a
+    valid slot range), which would defeat the whole purpose of
+    per-region indices set by the caller.
+
+    Used by factories that want per-region color (e.g.
+    NativeLowPolyTreeFactory splitting trunk from foliage). For a
+    single-color asset, prefer apply_palette() — same end result with
+    less ceremony.
     """
     if obj.type != "MESH":
         return obj
-    obj.data.materials.clear()
-    for key in slot_colors:
-        obj.data.materials.append(_get_or_create_palette_material(key))
+    mats = [_get_or_create_palette_material(key) for key in slot_colors]
+    # Grow / fill slots in place
+    for i, mat in enumerate(mats):
+        if i < len(obj.data.materials):
+            obj.data.materials[i] = mat
+        else:
+            obj.data.materials.append(mat)
+    # Trim trailing slots beyond the requested count
+    while len(obj.data.materials) > len(mats):
+        obj.data.materials.pop()
     return obj

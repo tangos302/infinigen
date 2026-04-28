@@ -206,7 +206,7 @@ def _add_pine_foliage(
     icosphere_subdivisions: int,
     rng: random.Random,
     smooth_shade: bool = True,
-):
+) -> tuple[int, int]:
     """Stack `layers` squashed icospheres up from `crown_position` to form a
     pine-cone-shaped foliage volume. All geometry is appended to `target`'s
     mesh as a SINGLE OBJECT (not instanced).
@@ -216,7 +216,14 @@ def _add_pine_foliage(
     from the skin modifier — keep their flat shading. Result: hard
     silhouette + smooth foliage, the Sable / stylized-pack read.
     smooth_shade=False keeps everything flat for the original Firewatch
-    faceted look."""
+    faceted look.
+
+    Returns (trunk_face_count, foliage_face_count) so the caller can
+    set material_index=1 on the foliage face range AFTER bm.to_mesh
+    (bmesh.faces[].material_index assignments do not survive bm.to_mesh
+    in Blender 4.2; only direct mesh.polygons[].material_index sticks)."""
+    trunk_face_count = len(target.data.polygons)
+
     bm = bmesh.new()
     bm.from_mesh(target.data)
     bm.faces.ensure_lookup_table()
@@ -245,12 +252,11 @@ def _add_pine_foliage(
         for j in range(prev_face_count, len(bm.faces)):
             if smooth_shade:
                 bm.faces[j].smooth = True
-            # Tag foliage faces with material_index=1 so the caller can
-            # apply a different material to slot 1 (trunk stays in slot 0).
-            bm.faces[j].material_index = 1
 
     bm.to_mesh(target.data)
     bm.free()
+    foliage_face_count = len(target.data.polygons) - trunk_face_count
+    return trunk_face_count, foliage_face_count
 
 
 # ---------------------------------------------------------------------------
@@ -387,12 +393,21 @@ class NativeLowPolyTreeFactory(AssetFactory):
             skeleton=skeleton,
         )
 
+        # Pre-allocate 2 material slots BEFORE setting any polygon
+        # material_index. Blender silently clamps material_index to a
+        # valid slot range when the slot doesn't exist, so any
+        # material_index=1 we set here without slots in place would be
+        # reset to 0 silently. apply_palette_slots replaces these
+        # placeholders later with real palette materials.
+        while len(obj.data.materials) < 2:
+            obj.data.materials.append(None)
+
         # Foliage clump — top of the trunk. Place crown so its bottom layer
         # sits roughly at the highest branch-attached trunk node and extends
         # upward, hiding the trunk top.
         crown_z_base = self.trunk_height * 0.55
         crown_pos = Vector((skeleton[0].position.x, skeleton[0].position.y, crown_z_base))
-        _add_pine_foliage(
+        trunk_count, foliage_count = _add_pine_foliage(
             obj,
             crown_position=crown_pos,
             crown_radius=self.foliage_radius,
@@ -402,6 +417,14 @@ class NativeLowPolyTreeFactory(AssetFactory):
             rng=rng,
             smooth_shade=self.smooth_foliage,
         )
+
+        # Tag foliage faces with material_index=1 directly on the mesh.
+        # Doing this BEFORE decimate is important — decimate preserves
+        # material_index through merges. Doing it on bmesh and writing
+        # back via bm.to_mesh did NOT stick in Blender 4.2.
+        for idx in range(trunk_count, trunk_count + foliage_count):
+            if idx < len(obj.data.polygons):
+                obj.data.polygons[idx].material_index = 1
 
         # Optional polycount cap. Decimate COLLAPSE preserves face.smooth
         # flags through merges (new faces inherit from neighbors), so the
