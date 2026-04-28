@@ -69,3 +69,22 @@ def apply_palette(obj: bpy.types.Object, palette_key: str) -> bpy.types.Object:
     obj.data.materials.clear()
     obj.data.materials.append(mat)
     return obj
+
+
+def apply_palette_slots(
+    obj: bpy.types.Object, slot_colors: list[str]
+) -> bpy.types.Object:
+    """Set up multiple material slots on `obj`, one per palette key in
+    `slot_colors`. Polygons' material_index values are preserved — caller is
+    responsible for having set those before/during geometry construction.
+
+    Used by factories that want per-region color (e.g. NativeLowPolyTreeFactory
+    splitting trunk from foliage). For a single-color asset, prefer
+    apply_palette() — same end result with less ceremony.
+    """
+    if obj.type != "MESH":
+        return obj
+    obj.data.materials.clear()
+    for key in slot_colors:
+        obj.data.materials.append(_get_or_create_palette_material(key))
+    return obj

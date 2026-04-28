@@ -34,7 +34,7 @@ from mathutils import Quaternion, Vector
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil
 
-from ...materials import apply_palette
+from ...materials import apply_palette, apply_palette_slots
 
 
 # ---------------------------------------------------------------------------
@@ -241,10 +241,13 @@ def _add_pine_foliage(
             v.co.y = v.co.y * rxy + center.y
             v.co.z = v.co.z * rz + center.z
 
-        if smooth_shade:
-            bm.faces.ensure_lookup_table()
-            for j in range(prev_face_count, len(bm.faces)):
+        bm.faces.ensure_lookup_table()
+        for j in range(prev_face_count, len(bm.faces)):
+            if smooth_shade:
                 bm.faces[j].smooth = True
+            # Tag foliage faces with material_index=1 so the caller can
+            # apply a different material to slot 1 (trunk stays in slot 0).
+            bm.faces[j].material_index = 1
 
     bm.to_mesh(target.data)
     bm.free()
@@ -319,6 +322,7 @@ class NativeLowPolyTreeFactory(AssetFactory):
         foliage_icosphere_subdivisions: int = 1,
         smooth_foliage: bool = True,
         target_polys: int | None = None,
+        trunk_color: str | None = "rock_shadow",
         palette_color: str | None = "foliage_pine",
         coarse: bool = False,
     ):
@@ -342,6 +346,7 @@ class NativeLowPolyTreeFactory(AssetFactory):
         self.foliage_icosphere_subdivisions = foliage_icosphere_subdivisions
         self.smooth_foliage = smooth_foliage
         self.target_polys = target_polys
+        self.trunk_color = trunk_color
         self.palette_color = palette_color
 
     # AssetFactory interface — placeholder is a lightweight stand-in (Empty);
@@ -419,6 +424,14 @@ class NativeLowPolyTreeFactory(AssetFactory):
         # is already flat, and the foliage faces carry their smooth flag
         # explicitly. Calling flat_shade would defeat smooth_foliage=True.
 
-        if self.palette_color is not None:
+        # Material slots: trunk faces stay at material_index=0 (slot 0),
+        # foliage faces were tagged material_index=1 in _add_pine_foliage
+        # (slot 1). If the caller wants two-tone (default), use both
+        # palette keys; otherwise fall back to single-color apply_palette.
+        if self.trunk_color is not None and self.palette_color is not None:
+            apply_palette_slots(obj, [self.trunk_color, self.palette_color])
+        elif self.palette_color is not None:
             apply_palette(obj, self.palette_color)
+        elif self.trunk_color is not None:
+            apply_palette(obj, self.trunk_color)
         return obj
