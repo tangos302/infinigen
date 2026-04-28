@@ -34,6 +34,7 @@ import bpy
 import numpy as np
 
 from infinigen.assets.composition import material_assignments
+from infinigen.assets.objects.trees import treeconfigs
 from infinigen.assets.objects.trees.generate import (
     GenericTreeFactory,
     random_species,
@@ -57,14 +58,18 @@ class LowPolyTreeFactory(GenericTreeFactory):
         factory_seed     — same as upstream
         season           — "summer"/"winter"/"autumn"/"spring" or None
                             (auto-pick from seed)
+        species          — genome archetype: "pine" (tall straight),
+                            "random" (full upstream variety). Default
+                            "pine" — Firewatch-style silhouette is
+                            tall and slender; broadleaf genomes
+                            produce gnarled fragments at low poly.
         target_face_size — face size used during create_asset's
-                            adapt_mesh_resolution. Default 0.3 m
+                            adapt_mesh_resolution. Default 0.15 m
                             (vs upstream's typical 0.01–0.05). Trunk
-                            radii are usually 0.05–0.5 m so 0.3
-                            keeps the silhouette while collapsing
-                            interior detail.
-        palette_color    — Maquette palette key (e.g. "rock_shadow",
-                            "foliage_pine") to apply as a single
+                            radii are usually 0.05–0.5 m so 0.15
+                            preserves trunk + main branch shape.
+        palette_color    — Maquette palette key (e.g. "foliage_pine",
+                            "rock_shadow") to apply as a single
                             material. None preserves upstream bark.
 
     All other kwargs forward to GenericTreeFactory.
@@ -74,7 +79,8 @@ class LowPolyTreeFactory(GenericTreeFactory):
         self,
         factory_seed,
         season: str | None = None,
-        target_face_size: float = 0.30,
+        species: str = "pine",
+        target_face_size: float = 0.15,
         palette_color: str | None = None,
         **kwargs,
     ):
@@ -83,7 +89,12 @@ class LowPolyTreeFactory(GenericTreeFactory):
                 season = np.random.choice(["summer", "winter", "autumn", "spring"])
 
         with FixedSeed(factory_seed):
-            (tree_params, _twig_params, _leaf_params), _ = random_species(season)
+            if species == "pine":
+                tree_params, _twig_params, _leaf_params = treeconfigs.pine_tree()
+            elif species == "random":
+                (tree_params, _twig_params, _leaf_params), _ = random_species(season)
+            else:
+                raise ValueError(f"unknown species {species!r}; expected 'pine' or 'random'")
             trunk_surface = weighted_sample(material_assignments.bark)
 
         super().__init__(
