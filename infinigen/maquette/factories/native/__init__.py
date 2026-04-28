@@ -26,6 +26,7 @@ from .crate import LowPolyCrateFactory
 from .fence import LowPolyFenceFactory
 from .lantern_post import LowPolyLanternPostFactory
 from .tree import NativeLowPolyTreeFactory
+from .water_surface import LowPolyWaterSurfaceFactory
 
 __all__ = [
     "LowPolyBarrelFactory",
@@ -33,5 +34,6 @@ __all__ = [
     "LowPolyFenceFactory",
     "LowPolyHouseFactory",
     "LowPolyLanternPostFactory",
+    "LowPolyWaterSurfaceFactory",
     "NativeLowPolyTreeFactory",
 ]
