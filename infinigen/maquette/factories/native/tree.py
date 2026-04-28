@@ -193,41 +193,171 @@ def _skeleton_to_skin_object(name: str, skeleton: list[_SkeletonNode]) -> bpy.ty
 
 
 # ---------------------------------------------------------------------------
-# Foliage — stacked icospheres (Firewatch deformed-balloon style)
+# Foliage archetypes — each implements a different stylized clump shape.
+# All emit faces appended directly to the existing target.data mesh as a
+# single object (no instancing), and tag the new faces' smooth flag based
+# on the smooth_shade arg.
 # ---------------------------------------------------------------------------
 
 
-def _add_pine_foliage(
-    target: bpy.types.Object,
+def _foliage_round_ball(
+    bm,
     crown_position: Vector,
     crown_radius: float,
     crown_height: float,
-    layers: int,
     icosphere_subdivisions: int,
     rng: random.Random,
-    smooth_shade: bool = True,
-) -> tuple[int, int]:
-    """Stack `layers` squashed icospheres up from `crown_position` to form a
-    pine-cone-shaped foliage volume. All geometry is appended to `target`'s
-    mesh as a SINGLE OBJECT (not instanced).
-
-    smooth_shade=True marks the new foliage faces as smooth-shaded directly
-    on bmesh (face.smooth = True). The trunk faces — already in the mesh
-    from the skin modifier — keep their flat shading. Result: hard
-    silhouette + smooth foliage, the Sable / stylized-pack read.
-    smooth_shade=False keeps everything flat for the original Firewatch
-    faceted look.
-
-    Returns (trunk_face_count, foliage_face_count) so the caller can
-    set material_index=1 on the foliage face range AFTER bm.to_mesh
-    (bmesh.faces[].material_index assignments do not survive bm.to_mesh
-    in Blender 4.2; only direct mesh.polygons[].material_index sticks)."""
-    trunk_face_count = len(target.data.polygons)
-
-    bm = bmesh.new()
-    bm.from_mesh(target.data)
+    smooth_shade: bool,
+) -> int:
+    """A single soft squashed icosphere — the canonical stylized
+    "broadleaf-tree-like-a-balloon" look. Returns # of faces added."""
+    prev_face_count = len(bm.faces)
+    rxy = crown_radius
+    rz = crown_height * 0.5  # squash slightly
+    center = Vector((crown_position.x, crown_position.y, crown_position.z + rz))
+    result = bmesh.ops.create_icosphere(
+        bm, subdivisions=icosphere_subdivisions, radius=1.0
+    )
+    new_verts = result["verts"]
+    for v in new_verts:
+        v.co.x = v.co.x * rxy + center.x
+        v.co.y = v.co.y * rxy + center.y
+        v.co.z = v.co.z * rz + center.z
     bm.faces.ensure_lookup_table()
+    if smooth_shade:
+        for j in range(prev_face_count, len(bm.faces)):
+            bm.faces[j].smooth = True
+    return len(bm.faces) - prev_face_count
 
+
+def _foliage_umbrella(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """A wide flat dome — the canopy / mushroom-cap look. Single
+    icosphere stretched horizontally and squashed vertically. Returns #
+    of faces added."""
+    prev_face_count = len(bm.faces)
+    rxy = crown_radius * 1.4
+    rz = crown_height * 0.30  # pancaked
+    center = Vector((crown_position.x, crown_position.y, crown_position.z + rz))
+    result = bmesh.ops.create_icosphere(
+        bm, subdivisions=icosphere_subdivisions, radius=1.0
+    )
+    new_verts = result["verts"]
+    for v in new_verts:
+        v.co.x = v.co.x * rxy + center.x
+        v.co.y = v.co.y * rxy + center.y
+        v.co.z = v.co.z * rz + center.z
+    bm.faces.ensure_lookup_table()
+    if smooth_shade:
+        for j in range(prev_face_count, len(bm.faces)):
+            bm.faces[j].smooth = True
+    return len(bm.faces) - prev_face_count
+
+
+def _foliage_crystal(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """An angular vertical icosphere — sharp/spire/crystal look.
+    Subdivisions=0 by default would give a base icosphere; combined
+    with vertical stretch this reads as a faceted crystal. Returns #
+    of faces added."""
+    prev_face_count = len(bm.faces)
+    rxy = crown_radius * 0.8
+    rz = crown_height * 0.7  # tall and narrow
+    center = Vector((crown_position.x, crown_position.y, crown_position.z + rz))
+    # Crystal is intentionally faceted — subdivision=0 gives a base
+    # 20-face icosahedron with sharp edges. Caller-provided subdivisions
+    # are still honored if greater.
+    subdivs = max(icosphere_subdivisions, 0)
+    result = bmesh.ops.create_icosphere(
+        bm, subdivisions=subdivs, radius=1.0
+    )
+    new_verts = result["verts"]
+    for v in new_verts:
+        v.co.x = v.co.x * rxy + center.x
+        v.co.y = v.co.y * rxy + center.y
+        v.co.z = v.co.z * rz + center.z
+    bm.faces.ensure_lookup_table()
+    # Crystal is the one archetype that benefits from FLAT shading
+    # regardless of smooth_shade — the angular look needs the facets
+    # visible. Caller can still override by editing the faces post-hoc.
+    for j in range(prev_face_count, len(bm.faces)):
+        bm.faces[j].smooth = False
+    return len(bm.faces) - prev_face_count
+
+
+def _foliage_bush(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """A clump of 3–5 overlapping small icospheres at random offsets —
+    organic-looking shrub / messy bush. Returns # of faces added."""
+    n = rng.randint(3, 5)
+    total_added = 0
+    base_radius = crown_radius * 0.55
+    for _ in range(n):
+        prev_face_count = len(bm.faces)
+        rxy = base_radius * rng.uniform(0.7, 1.2)
+        rz = base_radius * rng.uniform(0.7, 1.0)
+        ox = rng.uniform(-0.5, 0.5) * crown_radius
+        oy = rng.uniform(-0.5, 0.5) * crown_radius
+        oz = rng.uniform(0.0, 0.6) * crown_height
+        center = Vector(
+            (crown_position.x + ox, crown_position.y + oy, crown_position.z + oz + rz)
+        )
+        result = bmesh.ops.create_icosphere(
+            bm, subdivisions=icosphere_subdivisions, radius=1.0
+        )
+        new_verts = result["verts"]
+        for v in new_verts:
+            v.co.x = v.co.x * rxy + center.x
+            v.co.y = v.co.y * rxy + center.y
+            v.co.z = v.co.z * rz + center.z
+        bm.faces.ensure_lookup_table()
+        if smooth_shade:
+            for j in range(prev_face_count, len(bm.faces)):
+                bm.faces[j].smooth = True
+        total_added += len(bm.faces) - prev_face_count
+    return total_added
+
+
+# ---------------------------------------------------------------------------
+# Pine cone foliage + dispatcher
+# ---------------------------------------------------------------------------
+
+
+def _foliage_pine_cone(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+    layers: int = 4,
+) -> int:
+    """Original Firewatch-style stacked icospheres forming a pine cone
+    silhouette. Each layer is squashed (wider than tall), narrowing as
+    we go up. Returns # of faces added."""
+    initial_face_count = len(bm.faces)
     z_per_layer = crown_height / max(layers, 1)
     for i in range(layers):
         t = i / max(layers - 1, 1)
@@ -247,11 +377,59 @@ def _add_pine_foliage(
             v.co.x = v.co.x * rxy + center.x
             v.co.y = v.co.y * rxy + center.y
             v.co.z = v.co.z * rz + center.z
-
         bm.faces.ensure_lookup_table()
-        for j in range(prev_face_count, len(bm.faces)):
-            if smooth_shade:
+        if smooth_shade:
+            for j in range(prev_face_count, len(bm.faces)):
                 bm.faces[j].smooth = True
+    return len(bm.faces) - initial_face_count
+
+
+# Map archetype name → builder function. All builders take the same args
+# so the dispatch site doesn't need archetype-specific branching.
+_FOLIAGE_BUILDERS = {
+    "pine_cone":  _foliage_pine_cone,
+    "round_ball": _foliage_round_ball,
+    "umbrella":   _foliage_umbrella,
+    "crystal":    _foliage_crystal,
+    "bush":       _foliage_bush,
+}
+
+
+def _add_foliage(
+    target: bpy.types.Object,
+    archetype: str,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    layers: int,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool = True,
+) -> tuple[int, int]:
+    """Append a foliage clump of the given `archetype` to `target`'s mesh.
+    Returns (trunk_face_count, foliage_face_count) — caller sets
+    material_index=1 on the foliage face range after bm.to_mesh."""
+    if archetype not in _FOLIAGE_BUILDERS:
+        raise ValueError(
+            f"unknown foliage archetype {archetype!r}; valid: {list(_FOLIAGE_BUILDERS)}"
+        )
+    trunk_face_count = len(target.data.polygons)
+
+    bm = bmesh.new()
+    bm.from_mesh(target.data)
+    bm.faces.ensure_lookup_table()
+
+    builder = _FOLIAGE_BUILDERS[archetype]
+    if archetype == "pine_cone":
+        builder(
+            bm, crown_position, crown_radius, crown_height,
+            icosphere_subdivisions, rng, smooth_shade, layers=layers,
+        )
+    else:
+        builder(
+            bm, crown_position, crown_radius, crown_height,
+            icosphere_subdivisions, rng, smooth_shade,
+        )
 
     bm.to_mesh(target.data)
     bm.free()
@@ -323,6 +501,7 @@ class NativeLowPolyTreeFactory(AssetFactory):
         branch_taper: float = 0.5,
         branch_lower_z_fraction: float | None = None,
         crown_z_fraction: float = 0.45,
+        foliage_archetype: str = "pine_cone",
         foliage_layers: int = 4,
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
@@ -356,6 +535,12 @@ class NativeLowPolyTreeFactory(AssetFactory):
             else crown_z_fraction
         )
         self.crown_z_fraction = crown_z_fraction
+        if foliage_archetype not in _FOLIAGE_BUILDERS:
+            raise ValueError(
+                f"unknown foliage_archetype {foliage_archetype!r}; valid: "
+                f"{list(_FOLIAGE_BUILDERS)}"
+            )
+        self.foliage_archetype = foliage_archetype
         self.foliage_layers = foliage_layers
         self.foliage_radius = foliage_radius
         self.foliage_height = foliage_height
@@ -384,9 +569,18 @@ class NativeLowPolyTreeFactory(AssetFactory):
     def _build(self) -> bpy.types.Object:
         rng = random.Random(self.factory_seed)
 
+        # The trunk skeleton stops a small distance INSIDE the foliage
+        # volume so the trunk top is never visually exposed regardless
+        # of which foliage archetype the caller picks (umbrella ends
+        # earlier than crystal etc.). The user's `trunk_height`
+        # parameter becomes the total conceptual tree height; the
+        # actual skeleton is shorter.
+        crown_z_base = self.trunk_height * self.crown_z_fraction
+        trunk_skel_height = crown_z_base + min(0.6, self.foliage_height * 0.3)
+
         skeleton = _build_pine_skeleton(
             rng=rng,
-            trunk_height=self.trunk_height,
+            trunk_height=trunk_skel_height,
             trunk_segments=self.trunk_segments,
             trunk_radius_base=self.trunk_radius_base,
             trunk_radius_top=self.trunk_radius_top,
@@ -395,7 +589,10 @@ class NativeLowPolyTreeFactory(AssetFactory):
             branch_length_range=self.branch_length,
             branch_droop_range=self.branch_droop,
             branch_taper=self.branch_taper,
-            branch_lower_z_fraction=self.branch_lower_z_fraction,
+            # Branch lower fraction is relative to the *skeleton* height,
+            # not the conceptual trunk_height. Recompute so branches still
+            # only spawn at the upper end of the visible trunk.
+            branch_lower_z_fraction=min(0.99, crown_z_base / max(trunk_skel_height, 1e-6)),
         )
 
         obj = _skeleton_to_skin_object(
@@ -413,13 +610,12 @@ class NativeLowPolyTreeFactory(AssetFactory):
             obj.data.materials.append(None)
 
         # Foliage clump — bottom of the crown sits at crown_z_fraction *
-        # trunk_height. Branches are constrained to the same range
-        # (branch_lower_z_fraction defaults to this), so the foliage
-        # always covers the branchy section of the trunk.
-        crown_z_base = self.trunk_height * self.crown_z_fraction
+        # trunk_height. (crown_z_base computed earlier above for the
+        # skeleton-shortening logic.)
         crown_pos = Vector((skeleton[0].position.x, skeleton[0].position.y, crown_z_base))
-        trunk_count, foliage_count = _add_pine_foliage(
+        trunk_count, foliage_count = _add_foliage(
             obj,
+            archetype=self.foliage_archetype,
             crown_position=crown_pos,
             crown_radius=self.foliage_radius,
             crown_height=self.foliage_height,
