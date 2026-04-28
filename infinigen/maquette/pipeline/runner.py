@@ -60,6 +60,22 @@ CRITICAL RULES:
    mood (dawn, midday, golden hour, twilight, wasteland).
 
 5. Keep total object count under ~150 to render in <30s.
+
+6. DO NOT add `ShaderNodeVolumeScatter`, `ShaderNodeVolumeAbsorption`,
+   any world-volume effects, or fog/mist/haze volumetrics. They render
+   pure black at the low sample counts (32-48) we use. If the prompt
+   mentions "fog", "mist", "haze", "dust", express it through the world
+   background colour and sun warmth/dimness instead — never via a Volume
+   shader.
+
+7. Use the standard `archetype` parameter names from the catalog —
+   `building_archetype`, `foliage_archetype`, `trunk_archetype`,
+   `fence_archetype`, etc. There is no plain `archetype` kwarg on any
+   factory; passing it will cause a runtime error.
+
+8. The ground plane material should set `Base Color` directly. Do not
+   add image textures, noise nodes, or shader graphs to materials —
+   the Maquette aesthetic is solid flat colour per slot.
 """
 
 
