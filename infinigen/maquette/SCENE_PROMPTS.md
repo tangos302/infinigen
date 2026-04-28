@@ -140,6 +140,33 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 12 — re-run marketplace with Stall + Banner
+
+Built 2026-04-28 after shipping LowPolyStallFactory and
+LowPolyBannerFactory. Same square layout as Attempt 11 plus:
+
+- ✅ 6 stalls with varied awning colours (red/green/amber/amethyst/
+     rose/lemon) — open, closed_back, double archetypes mixed
+- ✅ 4 hanging banners at the square corners (matching colours)
+- ✅ Horizontal banner over the south entrance
+- ✅ Flag-pole banner above the central well
+- ✅ Crates placed on top of stall tables (z=0.85)
+- Saved: `_artifacts/maquette/prompt_marketplace_v2.{png,blend}`
+
+**Result**: scene reads as "lively medieval marketplace" — the
+coloured awnings dominate the silhouette and the banners frame the
+square. Major improvement over Attempt 11's "village around a well".
+
+The empirical methodology is paying off here: shipping the two
+factories with the highest narrative weight (Stall + Banner)
+transformed the scene from "buildings + crates" to "marketplace"
+without needing any of the secondary props (Sack / Basket / Rug /
+ShopSign) on the gap list.
+
+**Remaining gaps**: Sack, Basket, Rug, ShopSign — diminishing-return
+polish. The scene already reads as marketplace; these would add
+density but aren't load-bearing for the narrative.
+
 ### Attempt 11 — "lively medieval marketplace at midday"
 
 Built 2026-04-28 via headless Blender. Customer prompt: "lively
