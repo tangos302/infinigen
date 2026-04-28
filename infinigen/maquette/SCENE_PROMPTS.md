@@ -140,6 +140,79 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 22 — re-run Citadel with RockSpireFactory
+
+Built 2026-04-28 after shipping LowPolyRockSpireFactory. Same
+citadel layout as Attempt 21 but pillars use the proper "citadel"
+archetype:
+
+- ✅ 3 tall rock spires (height 22-27m) replacing scaled boulders;
+     each spire has organic per-layer XY jitter so they read as
+     eroded geological columns rather than smooth cylinders
+- ✅ Spires are wider at the top (top_radius > 0 at the apex) so
+     shanty buildings sit naturally on flat tops
+- ✅ Random Z-rotation on each spire so the asymmetric bulges
+     don't look duplicated
+- Saved: `_artifacts/maquette/prompt_citadel_v2.{png,blend}`
+
+**Result**: scene reads as "Mad Max Citadel" — the three pillars
+dominate the silhouette, shanties + red banners on top, hanging
+elevator decks between them. Dramatic upgrade over Attempt 21's
+"floating chunks".
+
+**Remaining gaps**: Vehicle (war rig), Cable (visible chains for
+elevators), Skull/V8 banner motif. Diminishing-return polish —
+the central premise (rock pillars + fortified tops) reads.
+
+### Attempt 21 — "Mad Max Citadel"
+
+Built 2026-04-28. Customer prompt: "the Mad Max citadel — three giant
+rock pillars rising from the wasteland, fortified at the top with
+shanty towers, hanging elevators between them, dust haze".
+
+- ✅ 3 rock-pillar stand-ins from boulders scaled to tall proportions
+     (poor — boulders go wide-flat, not tall-narrow)
+- ✅ Shanty buildings on top of each pillar (cluster of 3 small
+     cottage/tower/cabin)
+- ✅ Red flag-pole banners on each pillar (war-boy emblem stand-in)
+- ✅ Hanging dock_railed decks suspended mid-air between pillars
+     ("elevators" — but no cables shown so they look floating)
+- ✅ Western-pump windmill at the base for water-pump silhouette
+- ✅ Vehicle stand-ins (stretched crates with metal-drum "fuel tanks")
+- ✅ Crenellated stone walls at the base
+- ✅ Small water pool at base (citadel's water source)
+- ✅ Stone braziers + hanging lanterns at platforms
+- ✅ Dead-tree scrubland + scattered boulder rubble
+- Saved: `_artifacts/maquette/prompt_citadel.{png,blend}`
+
+**Result**: scene partially reads — silhouette has wasteland feel
+but the **rock pillars don't read as pillars**. Boulders scaled to
+(5,5,3) become wide-flat blobs floating in mid-air, not tall narrow
+columns rising from the ground. Needs a proper RockSpire factory.
+
+**Gaps hit (8):**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyRockSpireFactory` | THE Mad Max tell — tall narrow rock column with broken / craggy top. Reusable for canyons / mesas / ruined wizard towers |
+| `LowPolyVehicleFactory` | war rig / motorbike / armored truck. AgVehicle spec exists but Mad Max needs combat-ready variants |
+| `LowPolyCableFactory` | hanging chain / cable for elevators, drawbridges, suspension |
+| `LowPolyScaffoldingFactory` | rusted lattice on the pillar sides (interlocking poles) |
+| Skull / V8 emblem | Banner motif — could be a Banner archetype |
+| Dust / volumetric haze | shader work — out of v0 |
+| `LowPolyAntennaFactory` | tall slender mast for radio / war signaling |
+| `LowPolyTrebuchetFactory` | siege engine (also castle prompt) |
+
+NEW factories surfaced:
+`LowPolyRockSpireFactory`, `LowPolyVehicleFactory` (Mad Max
+variant), `LowPolyCableFactory`, `LowPolyScaffoldingFactory`,
+`LowPolyAntennaFactory`.
+
+**Top priority**: RockSpire — without proper geological columns,
+the central premise of the scene fails. Reusable across canyon /
+mesa / wizard-tower / lava-pillar prompts so high cross-prompt
+ROI.
+
 ### Attempt 20 — re-run temple with ToriiFactory
 
 Built 2026-04-28 after shipping LowPolyToriiFactory. Same temple
