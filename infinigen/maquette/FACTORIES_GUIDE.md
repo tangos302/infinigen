@@ -246,6 +246,63 @@ accent_color: str | None = 'accent_red'
 foundation_color: str | None = 'rock_shadow'
 ```
 
+### `LowPolyCableCarFactory`
+
+LowPolyCableCarFactory — gondola box hanging from a diagonal cable.
+
+**cable_car** archetypes: `alpine_gondola` / `mining_bucket` / `chair_lift`
+
+**Constructor parameters:**
+```
+factory_seed
+cable_car_archetype: str = 'alpine_gondola'
+cabin_length: float | None = None
+cabin_width: float | None = None
+cabin_height: float | None = None
+has_roof: bool | None = None
+roof_height: float | None = None
+has_walls: bool | None = None
+wall_thickness: float | None = None
+has_floor: bool | None = None
+hanger_length: float | None = None
+hanger_thickness: float | None = None
+cable_length: float | None = None
+cable_slope: float | None = None
+cable_thickness: float | None = None
+n_cable_segments: int | None = None
+body_color: str | None = None
+cable_color: str | None = None
+roof_color: str | None = None
+```
+
+### `LowPolyCactusFactory`
+
+LowPolyCactusFactory — saguaro / barrel cactus.
+
+**cactus** archetypes: `saguaro` / `barrel`
+
+**Constructor parameters:**
+```
+factory_seed
+cactus_archetype: str = 'saguaro'
+height: float | None = None
+base_radius: float | None = None
+top_radius: float | None = None
+n_sides: int | None = None
+n_layers: int | None = None
+rib_amplitude: float | None = None
+dome_segments: int | None = None
+n_arms: int | None = None
+arm_radius_fraction: float | None = None
+arm_horizontal_extent: float | None = None
+arm_vertical_extent: float | None = None
+arm_z_fraction_range: tuple[float, float] | None = None
+has_flower: bool | None = None
+flower_radius_fraction: float | None = None
+body_color: str | None = None
+flower_color: str | None = None
+```
+
 ### `LowPolyCrateFactory`
 
 LowPolyCrateFactory — wooden / metal storage crate.
@@ -437,6 +494,35 @@ awning_color: str | None = None
 table_color: str | None = None
 ```
 
+### `LowPolySuspensionBridgeFactory`
+
+LowPolySuspensionBridgeFactory — rope-and-plank bridge.
+
+**bridge** archetypes: `rope_plank` / `cable_suspension` / `chain_walk`
+
+**Constructor parameters:**
+```
+factory_seed
+bridge_archetype: str = 'rope_plank'
+length: float | None = None
+width: float | None = None
+sag: float | None = None
+deck_thickness: float | None = None
+n_planks: int | None = None
+plank_gap: float | None = None
+rope_size: float | None = None
+n_rope_segments: int | None = None
+has_towers: bool | None = None
+tower_height: float | None = None
+tower_size: float | None = None
+has_suspenders: bool | None = None
+n_suspenders: int | None = None
+cable_extra_height: float | None = None
+deck_color: str | None = None
+rope_color: str | None = None
+tower_color: str | None = None
+```
+
 ### `LowPolyTombstoneFactory`
 
 LowPolyTombstoneFactory — graveyard tombstones / monuments.
@@ -516,6 +602,56 @@ smooth_foliage: bool = False
 target_polys: int | None = None
 trunk_color: str | None = 'rock_shadow'
 palette_color: str | None = 'foliage_pine'
+```
+
+### `LowPolyTumbleweedFactory`
+
+LowPolyTumbleweedFactory — round tumbling brush.
+
+**tumbleweed** archetypes: `dry` / `dense` / `sparse` / `green`
+
+**Constructor parameters:**
+```
+factory_seed
+tumbleweed_archetype: str = 'dry'
+radius: float | None = None
+squash: float | None = None
+n_clumps_range: tuple[int, int] | None = None
+clump_radius_fraction_range: tuple[float, float] | None = None
+offset_fraction: float | None = None
+icosphere_subdivisions: int | None = None
+accent_fraction: float | None = None
+body_color: str | None = None
+accent_color: str | None = None
+```
+
+### `LowPolyWagonFactory`
+
+LowPolyWagonFactory — covered prairie schooner / buckboard / handcart.
+
+**wagon** archetypes: `prairie_schooner` / `buckboard` / `handcart`
+
+**Constructor parameters:**
+```
+factory_seed
+wagon_archetype: str = 'prairie_schooner'
+length: float | None = None
+width: float | None = None
+body_height: float | None = None
+n_axles: int | None = None
+wheel_radius: float | None = None
+wheel_thickness: float | None = None
+n_wheel_sides: int | None = None
+has_cover: bool | None = None
+cover_n_arc: int | None = None
+cover_n_along: int | None = None
+has_tongue: bool | None = None
+tongue_length: float | None = None
+has_handles: bool | None = None
+handle_length: float | None = None
+body_color: str | None = None
+wheel_color: str | None = None
+cover_color: str | None = None
 ```
 
 ### `LowPolyWaterSurfaceFactory`

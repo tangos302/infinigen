@@ -24,6 +24,8 @@ from .banner import LowPolyBannerFactory
 from .barrel import LowPolyBarrelFactory
 from .boat import LowPolyBoatFactory
 from .building import LowPolyHouseFactory
+from .cable_car import LowPolyCableCarFactory
+from .cactus import LowPolyCactusFactory
 from .crate import LowPolyCrateFactory
 from .deck import LowPolyDeckFactory
 from .fence import LowPolyFenceFactory
@@ -32,9 +34,12 @@ from .lantern_post import LowPolyLanternPostFactory
 from .palm_tree import LowPolyPalmTreeFactory
 from .rock_spire import LowPolyRockSpireFactory
 from .stall import LowPolyStallFactory
+from .suspension_bridge import LowPolySuspensionBridgeFactory
 from .tombstone import LowPolyTombstoneFactory
 from .torii import LowPolyToriiFactory
 from .tree import NativeLowPolyTreeFactory
+from .tumbleweed import LowPolyTumbleweedFactory
+from .wagon import LowPolyWagonFactory
 from .water_surface import LowPolyWaterSurfaceFactory
 from .well import LowPolyWellFactory
 from .windmill import LowPolyWindmillFactory
@@ -43,6 +48,8 @@ __all__ = [
     "LowPolyBannerFactory",
     "LowPolyBarrelFactory",
     "LowPolyBoatFactory",
+    "LowPolyCableCarFactory",
+    "LowPolyCactusFactory",
     "LowPolyCrateFactory",
     "LowPolyDeckFactory",
     "LowPolyFenceFactory",
@@ -52,8 +59,11 @@ __all__ = [
     "LowPolyPalmTreeFactory",
     "LowPolyRockSpireFactory",
     "LowPolyStallFactory",
+    "LowPolySuspensionBridgeFactory",
     "LowPolyTombstoneFactory",
     "LowPolyToriiFactory",
+    "LowPolyTumbleweedFactory",
+    "LowPolyWagonFactory",
     "LowPolyWaterSurfaceFactory",
     "LowPolyWellFactory",
     "LowPolyWindmillFactory",
