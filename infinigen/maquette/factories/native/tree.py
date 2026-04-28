@@ -530,23 +530,24 @@ class NativeLowPolyTreeFactory(AssetFactory):
         branch_taper: float = 0.5,
         branch_lower_z_fraction: float | None = None,
         crown_z_fraction: float = 0.45,
-        # Default is "crystal" — angular faceted icosphere with vertical
-        # stretch. User-validated as the best showcase look (clean
-        # silhouette, sharp shadow facets, no shading artifacts at
-        # sphere overlaps). Other archetypes (pine_cone, round_ball,
-        # umbrella, bush) remain available for variety / future
-        # features but aren't the default.
-        foliage_archetype: str = "crystal",
+        # Default archetype is pine_cone — most tree-like silhouette
+        # for a generic forest scatter. Callers wanting deliberate
+        # variety pass `foliage_archetype="round_ball"` /
+        # "umbrella" / "bush" / "crystal" per spawn.
+        foliage_archetype: str = "pine_cone",
         foliage_layers: int = 4,
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
-        # Crystal forces flat shading so subdivision can stay low —
-        # the angular look is the point. Other archetypes that opt
-        # into smooth shading benefit from higher subdivisions; we
-        # keep this default at 2 so switching archetypes is still
-        # smooth-shading-friendly without explicit override.
+        # Subdivision=2 → 320 polys/icosphere; matters for smooth
+        # shading. With smooth_foliage=False (the default since
+        # 2026-04-28) flat shading is the look, so 1 is also fine
+        # but 2 keeps the silhouette curve cleaner.
         foliage_icosphere_subdivisions: int = 2,
-        smooth_foliage: bool = True,
+        # smooth_foliage=False is the canonical Maquette material — the
+        # flat-shaded angular crystal-style look applied uniformly across
+        # archetypes. Pass True for the smoother Sable/Genshin-pack feel
+        # on a specific tree.
+        smooth_foliage: bool = False,
         target_polys: int | None = None,
         trunk_color: str | None = "rock_shadow",
         palette_color: str | None = "foliage_pine",
