@@ -140,6 +140,69 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 18 — re-run graveyard with TombstoneFactory
+
+Built 2026-04-28 after shipping LowPolyTombstoneFactory. Same
+graveyard layout as Attempt 17 but tombstones replaced with the
+real factory:
+
+- ✅ 4 rows × 6 mixed tombstones (slab/arch/cross/obelisk/flat_marker
+     randomly selected per stone)
+- ✅ Per-stone random Z rotation + lean angle (-0.15 to +0.15 rad)
+     for "old weathered" feel
+- Saved: `_artifacts/maquette/prompt_graveyard_v2.{png,blend}`
+
+**Result**: scene reads as "graveyard" now — the mixed silhouettes
+(crosses, arches, obelisks among slabs) lock it in. Randomized
+shapes + leans give the variety a real cemetery has.
+
+**Remaining gaps**: IronGate, Cross monument, Mist (volumetric).
+The scene already reads — these are diminishing-return polish.
+
+### Attempt 17 — "old haunted graveyard at twilight"
+
+Built 2026-04-28. Customer prompt: "old haunted graveyard at twilight
+— rows of tombstones, a mausoleum, leafless trees, low mist".
+
+- ✅ Mausoleum (tower archetype scaled down + 2 cabin "crypts")
+- ✅ 4 rows × 6 stand-in "tombstones" (sub-1m stone-wall segments)
+- ✅ Rust-coloured picket fences as broken iron fences
+- ✅ 6 dead-tree approximations (crystal-foliage trees with
+     `rock_shadow` color, curved trunks — surprisingly creepy at
+     twilight)
+- ✅ Iron-post lanterns + stone braziers at crypt entrance
+- ✅ Black hanging banner on mausoleum
+- ✅ Twilight lighting (dim cool sun + purple-grey sky)
+- Saved: `_artifacts/maquette/prompt_graveyard.{png,blend}`
+
+**Result**: scene reads as "spooky stone field with dead trees" —
+partially graveyard, but the tombstones don't read because tiny
+stone-wall stand-ins look like rocks not tombs. Dead trees
+(crystal foliage + dark color) are doing surprising heavy lifting.
+
+**Gaps hit (5):**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyTombstoneFactory` | THE graveyard tell — slab/cross/arch shapes, currently we have nothing |
+| `LowPolyIronGateFactory` | gothic broken-iron gate at entrance |
+| `LowPolyDeadTreeBareFactory` | leafless skeleton tree (proper bare branches, not just dark foliage) |
+| Mist / volumetric fog | atmosphere — Cycles volumetric is shader work, out of v0 |
+| `LowPolyCrossFactory` | large stone cross monument (also for Christian / monastery prompts) |
+
+**Top priority**: TombstoneFactory — the iconic graveyard prop.
+Multiple archetypes are needed since real graveyards have variety.
+
+NEW factories surfaced this attempt:
+`LowPolyTombstoneFactory`, `LowPolyIronGateFactory`,
+`LowPolyDeadTreeBareFactory`, `LowPolyCrossFactory`.
+
+Bonus discovery: the dark `rock_shadow` palette + crystal foliage
+archetype unexpectedly reads as "leafless dead tree" at twilight
+lighting. The Tier 7 spec for `LowPolyDeadTreeBareFactory` should
+note this as a fallback variant rather than spawning a separate
+factory.
+
 ### Attempt 16 — re-run castle with crenellated walls
 
 Built 2026-04-28 after extending `LowPolyFenceFactory.stone_wall`
