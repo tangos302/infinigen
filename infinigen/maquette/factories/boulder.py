@@ -22,6 +22,7 @@ import bpy
 from infinigen.assets.objects.rocks.boulder import BoulderFactory
 
 from ..lowpoly import decimate, flat_shade, strip_voronoi_displace
+from ..materials import apply_palette
 
 
 class LowPolyBoulderFactory(BoulderFactory):
@@ -49,6 +50,7 @@ class LowPolyBoulderFactory(BoulderFactory):
         factory_seed,
         target_face_size: float = 0.15,
         decimate_ratio: float | None = None,
+        palette_color: str | None = None,
         **kwargs,
     ):
         super().__init__(factory_seed, **kwargs)
@@ -56,6 +58,7 @@ class LowPolyBoulderFactory(BoulderFactory):
         if decimate_ratio is not None:
             decimate_ratio = float(decimate_ratio)
         self._maquette_decimate_ratio = decimate_ratio
+        self._maquette_palette_color = palette_color
 
     def create_placeholder(self, boulder_scale: float = 1, **kwargs) -> bpy.types.Object:
         obj = super().create_placeholder(boulder_scale=boulder_scale, **kwargs)
@@ -86,4 +89,6 @@ class LowPolyBoulderFactory(BoulderFactory):
         flat_shade(skin_obj)
         if self._maquette_decimate_ratio is not None:
             decimate(skin_obj, self._maquette_decimate_ratio)
+        if self._maquette_palette_color is not None:
+            apply_palette(skin_obj, self._maquette_palette_color)
         return skin_obj
