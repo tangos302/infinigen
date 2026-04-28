@@ -140,6 +140,31 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 7 — re-run "medieval village" with Tier-1 factories built
+
+Built 2026-04-28 via headless Blender, after shipping LanternPost,
+Fence, Barrel, and Crate factories. Same prompt as Attempt 1 — verifies
+the empirical loop closes.
+
+- ✅ 5 houses (cottage / longhouse / cabin / tower) around a square
+- ✅ 24 trees (5-archetype mix) framing the village
+- ✅ 8 boulders on the periphery
+- ✅ 4 fences across all archetypes (picket, post-and-rail, stone wall,
+  wooden plank) defining yards / corral / boundaries
+- ✅ 4 lanterns (2 iron post + 1 stone brazier + 1 wooden post) at the
+  square + by houses
+- ✅ 2 barrels (one upright, one on its side) by cottage door + longhouse
+- ✅ 5 crates (mixed wooden/fragile/metal) in stacks by tower + longhouse
+- Saved: `_artifacts/maquette/prompt_medieval_village_v2.{png,blend}`
+
+**Result**: scene reads as "medieval village" — lanterns light the
+square, fences enclose plots, crates stack as cargo. The Firewatch
+silhouette holds across all the new props.
+
+**Remaining gaps for this prompt** (still not buildable):
+WaterSurface, Bridge, Path, Well, Signpost. Stream is still the
+dominant missing element — confirms WaterSurface as next priority.
+
 ### Cross-attempt frequency (6 attempts)
 
 | Factory | Attempts where it's missing |
