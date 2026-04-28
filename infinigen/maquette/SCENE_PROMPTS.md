@@ -33,24 +33,69 @@ Status legend:
 
 ---
 
-## Prompts walked
+## Empirical attempt log
 
-### Prompt 1 — "medieval village by a stream"
+These prompts were ACTUALLY built via MCP using only existing
+factories. The "GAPS HIT" tables below are confirmed by attempting
+the build, not just imagined.
 
-What I'd need:
-- 5–8 mixed-archetype houses ✅ (cottage, longhouse, cabin)
-- Trees, rocks ✅
-- **A stream / water surface** ❌
-- **A wooden bridge** spanning the stream ❌
-- **A path** connecting the houses ❌
-- **Fences** / hedges between yards ❌
-- A **well** in the village square ❌
-- **Signposts** / lamp posts ❌
-- **Barrels / crates** outside doorways ❌
+### Attempt 1 — "medieval village by a stream"
 
-Verdict: houses + nature ✅, infrastructure (water/path/fences/etc) ❌.
+Built 2026-04-28 via MCP:
+- ✅ 6 houses (cottage, longhouse, cottage, cabin, barn, tower)
+  arranged on one bank
+- ✅ 14 mixed-archetype trees
+- ✅ 12 boulders
+- Saved: `_artifacts/maquette/prompt_medieval_village.{png,blend}`
 
-### Prompt 2 — "Wild West frontier town main street"
+**Gaps hit (could not build with current factories):**
+
+| Missing factory | Why the prompt needed it |
+|---|---|
+| `LowPolyWaterSurfaceFactory` | the stream is the focal feature |
+| `LowPolyBridgeFactory` | "by a stream" implies pedestrian crossing |
+| `LowPolyPathFactory` | dirt paths between buildings |
+| `LowPolyFenceFactory` | enclosed yards / crop plots |
+| `LowPolyWellFactory` | medieval village square staple |
+| `LowPolyLanternPostFactory` | exterior lighting |
+| `LowPolyBarrelFactory` | props by doors and stalls |
+| `LowPolyCrateFactory` | (paired with barrel) |
+| `LowPolySignpostFactory` | path junctions |
+
+**Result**: scene reads as "houses in a forest", not "village by a stream".
+The water + crossing + paths are doing the heavy narrative lifting in
+the prompt and we have none of that.
+
+### Attempt 2 — "abandoned forest campsite at dusk"
+
+Built 2026-04-28 via MCP:
+- ✅ 20 trees as a forest ring
+- ✅ 8 boulders in the clearing
+- Saved: `_artifacts/maquette/prompt_campsite.{png,blend}`
+
+**Gaps hit:**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyCampfireFactory` | stone ring + crossed logs — focal point of any campsite |
+| `LowPolyTentFactory` | ridge-pole tent — core campsite asset |
+| `LowPolyLogFactory` | fallen logs to sit on (NEW — not in initial spec list) |
+| `LowPolyLanternPostFactory` | hanging lantern for atmosphere |
+| `LowPolyBarrelFactory` | supplies |
+| `LowPolyCrateFactory` | supplies |
+| `LowPolyAxeStumpFactory` | stump-with-axe is the stylized "abandoned camp" tell (NEW) |
+
+**Result**: scene reads as "empty forest clearing". The campsite is
+implied by the prompt's narrative but invisible — every signature
+prop is missing.
+
+### Imagined prompts (not yet built — same methodology applies)
+
+The prompts below are reasoned about but not yet built via MCP. Each
+gap list is from mental simulation; expect new gaps to surface when
+they're actually attempted.
+
+### Prompt 3 — "Wild West frontier town main street"
 
 What I'd need:
 - Saloon / bank / sheriff (longhouse + cottage variants) ✅
@@ -65,7 +110,7 @@ What I'd need:
 
 Verdict: buildings ✅, transport + town infra ❌.
 
-### Prompt 3 — "fantasy mountain monastery at sunset"
+### Prompt 5 — "fantasy mountain monastery at sunset"
 
 What I'd need:
 - A **mountain** / cliff backdrop (procedural terrain) ❌
@@ -79,20 +124,7 @@ What I'd need:
 
 Verdict: building ✅, terrain + ritual props ❌.
 
-### Prompt 4 — "forest clearing with abandoned campsite"
-
-What I'd need:
-- Trees, boulders ✅
-- A **campfire** / fire pit (stone ring + log pyramid) ❌
-- **Tents** ❌
-- **Logs** for sitting on (long cylinders) ❌
-- A **lantern post** / hanging lantern ❌
-- **Crates / barrels** ❌
-- **Tracks** / scuff marks on ground (texture, out of v0 mesh scope) — skip
-
-Verdict: nature ✅, campsite props all ❌.
-
-### Prompt 5 — "lakeside fishing village"
+### Prompt 4 — "lakeside fishing village"
 
 What I'd need:
 - Houses ✅
@@ -107,6 +139,7 @@ What I'd need:
 Verdict: houses ✅, water + boats + props ❌.
 
 ### Prompt 6 — "ancient ruins at the edge of a forest"
+
 
 What I'd need:
 - Trees ✅
@@ -507,6 +540,50 @@ weathering_color : str | None = None    slot 1 if dual-tone
 ```
 
 Slots: 1–2. Polycount: ~50.
+
+### `LowPolyLogFactory`
+
+**(Discovered 2026-04-28 in campsite attempt.)** Long horizontal
+fallen tree segment used as bench / decoration. Just a long tapered
+cylinder with bark color.
+
+```
+log_archetype : str = "fallen"          "fallen" (lying), "stump", "hewn"
+length        : float = 1.8
+radius        : float = 0.18
+taper         : float = 0.85            top radius = base * taper
+n_sides       : int = 8
+has_endcaps   : bool = True             rings show end grain
+weathering    : bool = True             slight surface jitter
+
+bark_color : str = "wood"
+endcap_color : str | None = None         slot 1 (different end-grain tone)
+```
+
+Slots: 1–2. Polycount: ~20.
+Implementation: cylinder via bmesh; rotate 90° around X for "fallen";
+"stump" is a short vertical version; "hewn" is rectangular cut along
+length.
+
+### `LowPolyAxeStumpFactory`
+
+**(Discovered 2026-04-28 in campsite attempt.)** A stump with an axe
+embedded in the top — stylized "abandoned camp" tell. Composite of
+log + axe head + axe handle.
+
+```
+stump_height    : float = 0.5
+stump_radius    : float = 0.4
+axe_handle_length : float = 0.7
+axe_head_size   : float = 0.18
+axe_lean        : float = 30.0          deg, axe sticks at angle
+
+stump_color : str = "wood"
+handle_color : str = "wood"
+head_color  : str = "rust_metal"        slot 1
+```
+
+Slots: 2. Polycount: ~25.
 
 ### `LowPolyHitchingPostFactory`
 
