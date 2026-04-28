@@ -140,6 +140,56 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 13 — "small pirate cove with a wooden pier"
+
+Built 2026-04-28. Customer prompt: "small pirate cove with a wooden
+pier, a couple of boats, and a beach. Late afternoon".
+
+- ✅ Big still_lake as the cove water (40×16m)
+- ✅ 3 cottage/longhouse/cabin buildings on the south shore
+- ✅ 5 umbrella-archetype trees with `foliage_apple` color on shore
+     (closest available "tropical" feel — NOT palms)
+- ✅ 8 bush-archetype shrubs as beach grass
+- ✅ 3-crate cluster of "metal" archetype as "treasure stash"
+     stand-in
+- ✅ Barrels of grog by the buildings, 2 wooden_post lanterns
+- ✅ Boulders along shoreline (riprap)
+- Saved: `_artifacts/maquette/prompt_pirate_cove.{png,blend}`
+
+**Result**: scene reads as "small village by the water" — NOT
+"pirate cove". Without boats and a pier, the prompt's whole
+narrative ("pirates landed here, hid loot, drinking grog by the
+shore") is invisible.
+
+**Gaps hit (10):**
+
+| Missing factory | Why |
+|---|---|
+| `LowPolyBoatFactory` | THE coastal-scene tell — rowboat/dinghy/pirate brig |
+| `LowPolyPierFactory` | wooden plank dock extending into water |
+| `LowPolyPalmTreeFactory` | proper palm — curved bare trunk + drooping fronds |
+| `LowPolyTreasureChestFactory` | actual pirate chest with iron straps |
+| `LowPolyAnchorFactory` | beached / abandoned anchor |
+| `LowPolyRopeCoilFactory` | rigging coils on the dock |
+| `LowPolyCannonFactory` | ship's gun (also for castle / fortress) |
+| `LowPolyBuoyFactory` | floating marker (already on fishing list) |
+| `LowPolySandDuneFactory` | bumpy sand mound — proper beach silhouette |
+| `LowPolyJollyRogerFactory` | flag with skull motif (Banner archetype) |
+
+NEW factories surfaced this attempt:
+`LowPolyBoatFactory`, `LowPolyPierFactory`,
+`LowPolyPalmTreeFactory`, `LowPolyTreasureChestFactory`,
+`LowPolyAnchorFactory`, `LowPolyRopeCoilFactory`,
+`LowPolyCannonFactory`, `LowPolySandDuneFactory`.
+
+`LowPolyJollyRogerFactory` could just be a Banner archetype with
+`cloth_color` + a small motif — fold into existing Banner.
+
+Top priority: **Boat** (biggest cross-prompt value: pirate cove,
+fishing village Attempt 4, river crossings). Pier is a strong
+second — same geometry as Boardwalk archetype proposed earlier;
+likely fold into a single `LowPolyDeckFactory(deck_archetype="pier"|"boardwalk")`.
+
 ### Attempt 12 — re-run marketplace with Stall + Banner
 
 Built 2026-04-28 after shipping LowPolyStallFactory and
