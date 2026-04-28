@@ -42,6 +42,10 @@ MAQUETTE_PALETTE: dict[str, str] = {
     "foliage_amethyst": "#9E72BC",   # saturated purple
     "foliage_lemon":    "#E8D964",   # warm yellow
     "foliage_coral":    "#E0735C",   # coral
+    # Crafted-material tones — used by lantern posts, fences, barrels,
+    # crates, signposts, carts. Kept muted so they don't fight foliage.
+    "wood":         "#6B4A2E",   # warm dark wood
+    "rust_metal":   "#4A3E36",   # dark iron / oxide
     # Ground.
     "ground_sand":  "#D9B884",
     "ground_grass": "#8A9462",

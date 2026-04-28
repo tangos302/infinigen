@@ -31,12 +31,17 @@ fine.
 """
 
 from .boulder import LowPolyBoulderFactory
-from .native import LowPolyHouseFactory, NativeLowPolyTreeFactory
+from .native import (
+    LowPolyHouseFactory,
+    LowPolyLanternPostFactory,
+    NativeLowPolyTreeFactory,
+)
 from .tree import LowPolyTreeFactory
 
 __all__ = [
     "LowPolyBoulderFactory",
     "LowPolyHouseFactory",
+    "LowPolyLanternPostFactory",
     "LowPolyTreeFactory",
     "NativeLowPolyTreeFactory",
 ]
