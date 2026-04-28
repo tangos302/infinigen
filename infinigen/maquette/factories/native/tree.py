@@ -34,6 +34,11 @@ from mathutils import Quaternion, Vector
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil
 
+from ...density import (
+    n_along_axis,
+    n_subdivisions,
+    target_edge_for_bbox,
+)
 from ...materials import apply_palette, apply_palette_slots
 
 
@@ -517,7 +522,9 @@ class NativeLowPolyTreeFactory(AssetFactory):
         trunk_archetype: str = "straight",
         trunk_curve_amplitude: float = 0.5,
         trunk_height: float = 6.0,
-        trunk_segments: int = 7,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
+        trunk_segments: int | None = None,
         trunk_radius_base: float = 0.18,
         # Larger trunk_radius_top reduces the visible diameter
         # discontinuity where the thin trunk meets the wide foliage
@@ -542,7 +549,7 @@ class NativeLowPolyTreeFactory(AssetFactory):
         # shading. With smooth_foliage=False (the default since
         # 2026-04-28) flat shading is the look, so 1 is also fine
         # but 2 keeps the silhouette curve cleaner.
-        foliage_icosphere_subdivisions: int = 2,
+        foliage_icosphere_subdivisions: int | None = None,
         # smooth_foliage=False is the canonical Maquette material — the
         # flat-shaded angular crystal-style look applied uniformly across
         # archetypes. Pass True for the smoother Sable/Genshin-pack feel
@@ -592,7 +599,31 @@ class NativeLowPolyTreeFactory(AssetFactory):
         self.foliage_layers = foliage_layers
         self.foliage_radius = foliage_radius
         self.foliage_height = foliage_height
-        self.foliage_icosphere_subdivisions = foliage_icosphere_subdivisions
+        # Bbox-derive trunk_segments + foliage subdivisions if caller didn't
+        # pin them. The tree's overall bbox roughly = (foliage_radius*2,
+        # foliage_radius*2, trunk_height + foliage_height/2).
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.foliage_radius * 2, self.foliage_radius * 2,
+                 self.trunk_height + self.foliage_height * 0.5),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
+        self._density_edge = edge
+        if trunk_segments is None:
+            self.trunk_segments = max(3, n_along_axis(self.trunk_height, edge, min_n=4))
+        else:
+            self.trunk_segments = int(trunk_segments)
+        if foliage_icosphere_subdivisions is None:
+            # An icosphere of subdiv=0 has 20 faces and edge ≈ radius.
+            # Each subdivision quarters the face count and halves the edge.
+            self.foliage_icosphere_subdivisions = max(
+                0,
+                min(3, n_subdivisions(self.foliage_radius, edge, max_levels=3)),
+            )
+        else:
+            self.foliage_icosphere_subdivisions = int(foliage_icosphere_subdivisions)
         self.smooth_foliage = smooth_foliage
         self.target_polys = target_polys
         self.trunk_color = trunk_color

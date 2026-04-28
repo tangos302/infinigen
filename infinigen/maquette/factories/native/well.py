@@ -27,15 +27,19 @@ from mathutils import Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _WELL_ARCHETYPES = ("stone_round", "wooden_box")
 
 
+# `n_sides` is bbox-derived when omitted from defaults (round archetypes);
+# archetypes that need a fixed shape — e.g. `wooden_box` literally needs
+# 4 corners — pin it explicitly.
 _ARCHETYPE_DEFAULTS = {
     "stone_round": dict(
-        radius=0.8, wall_height=0.7, n_sides=10,
+        radius=0.8, wall_height=0.7,
         has_roof=True, roof_height=1.2, post_radius=0.06,
         has_bucket=True, bucket_size=0.35,
         stone_color="rock_pale", wood_color="wood", roof_color="rock_shadow",
@@ -248,6 +252,8 @@ class LowPolyWellFactory(AssetFactory):
         well_archetype: str = "stone_round",
         radius: float | None = None,
         wall_height: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_sides: int | None = None,
         has_roof: bool | None = None,
         roof_height: float | None = None,
@@ -270,7 +276,22 @@ class LowPolyWellFactory(AssetFactory):
         self.wall_height = float(
             wall_height if wall_height is not None else d["wall_height"]
         )
-        self.n_sides = int(n_sides if n_sides is not None else d["n_sides"])
+        # Bbox-derive n_sides unless caller pinned it OR the archetype
+        # defaults pin it (e.g. wooden_box=4).
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.radius * 2, self.radius * 2,
+                 self.wall_height + float(d.get("roof_height", 0.0))),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
+        if n_sides is not None:
+            self.n_sides = int(n_sides)
+        elif "n_sides" in d:
+            self.n_sides = int(d["n_sides"])
+        else:
+            self.n_sides = n_sides_for_radius(self.radius, edge)
         self.has_roof = (
             bool(has_roof) if has_roof is not None else d["has_roof"]
         )

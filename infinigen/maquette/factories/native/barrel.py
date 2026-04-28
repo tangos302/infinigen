@@ -28,20 +28,23 @@ from mathutils import Matrix, Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _BARREL_ARCHETYPES = ("wooden", "metal_drum")
 
 
+# n_staves (= n_sides) is derived from bbox at instantiation time. Defaults
+# are dimensional + behavioral only.
 _ARCHETYPE_DEFAULTS = {
     "wooden": dict(
-        height=1.0, radius=0.4, n_staves=12, n_bands=2,
+        height=1.0, radius=0.4, n_bands=2,
         band_thickness=0.05, band_protrusion=0.02,
         body_color="wood", band_color="rust_metal",
     ),
     "metal_drum": dict(
-        height=0.95, radius=0.32, n_staves=12, n_bands=2,
+        height=0.95, radius=0.32, n_bands=2,
         band_thickness=0.04, band_protrusion=0.015,
         body_color="rust_metal", band_color="rust_metal",
     ),
@@ -84,7 +87,9 @@ class LowPolyBarrelFactory(AssetFactory):
         barrel_archetype  : str = "wooden"  "wooden" | "metal_drum"
         height            : float
         radius            : float
-        n_staves          : int    cylinder side count
+        polygon_multiplier: float = 1.0  <1 = chunkier, >1 = denser
+        target_edge       : float        absolute world-edge override
+        n_staves          : int          hard override of derived count
         n_bands           : int    metal hoops
         band_thickness    : float  hoop vertical thickness
         band_protrusion   : float  hoop sticks out by this much
@@ -99,6 +104,8 @@ class LowPolyBarrelFactory(AssetFactory):
         barrel_archetype: str = "wooden",
         height: float | None = None,
         radius: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_staves: int | None = None,
         n_bands: int | None = None,
         band_thickness: float | None = None,
@@ -118,7 +125,17 @@ class LowPolyBarrelFactory(AssetFactory):
         self.barrel_archetype = barrel_archetype
         self.height = float(height if height is not None else d["height"])
         self.radius = float(radius if radius is not None else d["radius"])
-        self.n_staves = int(n_staves if n_staves is not None else d["n_staves"])
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.radius * 2, self.radius * 2, self.height),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
+        self.n_staves = int(
+            n_staves if n_staves is not None
+            else n_sides_for_radius(self.radius, edge, min_n=6)
+        )
         self.n_bands = int(n_bands if n_bands is not None else d["n_bands"])
         self.band_thickness = float(
             band_thickness if band_thickness is not None else d["band_thickness"]

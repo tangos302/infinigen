@@ -31,25 +31,32 @@ from mathutils import Matrix, Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import (
+    n_along_axis,
+    n_sides_for_radius,
+    target_edge_for_bbox,
+)
 from ...materials import apply_palette_slots
 
 
 _HAYSTACK_ARCHETYPES = ("cone", "rounded_mound", "stacked_disks")
 
 
+# Polygon counts (n_sides, n_layers) are derived from bbox via density.py
+# at instantiation time. Defaults here are dimensional only.
 _ARCHETYPE_DEFAULTS = {
     "cone": dict(
-        height=1.8, radius=1.2, n_sides=8, n_layers=1,
+        height=1.8, radius=1.2,
         top_offset=(0.0, 0.0),
         hay_color="foliage_lemon", cap_color="foliage_lemon",
     ),
     "rounded_mound": dict(
-        height=1.4, radius=1.3, n_sides=10, n_layers=1,
+        height=1.4, radius=1.3,
         top_offset=(0.15, 0.0),  # slight lean
         hay_color="foliage_lemon", cap_color="foliage_lemon",
     ),
     "stacked_disks": dict(
-        height=2.0, radius=1.4, n_sides=8, n_layers=4,
+        height=2.0, radius=1.4,
         top_offset=(0.0, 0.0),
         hay_color="foliage_lemon", cap_color="foliage_lemon",
     ),
@@ -195,8 +202,10 @@ class LowPolyHaystackFactory(AssetFactory):
                              "cone" | "rounded_mound" | "stacked_disks"
         height             : float
         radius             : float
-        n_sides            : int    cylinder/cone side count
-        n_layers           : int    disks for stacked_disks
+        polygon_multiplier : float = 1.0   <1 = denser, >1 = chunkier
+        target_edge        : float         absolute world-edge override
+        n_sides            : int           hard override of derived count
+        n_layers           : int           hard override of derived count
         top_offset         : (dx, dy)  apex lateral offset for "lean"
         hay_color          : str    slot 0
         cap_color          : str    slot 1 (default same as hay_color)
@@ -208,6 +217,8 @@ class LowPolyHaystackFactory(AssetFactory):
         haystack_archetype: str = "cone",
         height: float | None = None,
         radius: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_sides: int | None = None,
         n_layers: int | None = None,
         top_offset: tuple[float, float] | None = None,
@@ -225,8 +236,21 @@ class LowPolyHaystackFactory(AssetFactory):
         self.haystack_archetype = haystack_archetype
         self.height = float(height if height is not None else d["height"])
         self.radius = float(radius if radius is not None else d["radius"])
-        self.n_sides = int(n_sides if n_sides is not None else d["n_sides"])
-        self.n_layers = int(n_layers if n_layers is not None else d["n_layers"])
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.radius * 2, self.radius * 2, self.height),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
+        self.n_sides = int(
+            n_sides if n_sides is not None
+            else n_sides_for_radius(self.radius, edge)
+        )
+        self.n_layers = int(
+            n_layers if n_layers is not None
+            else n_along_axis(self.height, edge)
+        )
         offset = top_offset if top_offset is not None else d["top_offset"]
         self.top_offset = (float(offset[0]), float(offset[1]))
         self.hay_color = hay_color or d["hay_color"]

@@ -42,16 +42,22 @@ from mathutils import Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import (
+    n_along_axis,
+    n_sides_for_radius,
+    target_edge_for_bbox,
+)
 from ...materials import apply_palette_slots
 
 
 _SPIRE_ARCHETYPES = ("needle", "mesa", "citadel", "hoodoo")
 
 
+# n_sides / n_layers are derived from bbox at instantiation time. Defaults
+# here are dimensional + behavioral only.
 _ARCHETYPE_DEFAULTS = {
     "needle": dict(
         height=18.0, base_radius=2.5, top_radius=0.6,
-        n_sides=8, n_layers=6,
         layer_jitter=0.15, taper_curve=1.5,    # >1 = narrow faster at top
         has_cap=False, cap_radius=0.0, cap_height=0.0,
         pointed_top=True,
@@ -59,7 +65,6 @@ _ARCHETYPE_DEFAULTS = {
     ),
     "mesa": dict(
         height=10.0, base_radius=5.0, top_radius=4.5,
-        n_sides=8, n_layers=4,
         layer_jitter=0.1, taper_curve=0.8,
         has_cap=False, cap_radius=0.0, cap_height=0.0,
         pointed_top=False,
@@ -68,7 +73,6 @@ _ARCHETYPE_DEFAULTS = {
     "citadel": dict(
         # Mad Max-style: tall + narrow but wider top so shanties can sit
         height=22.0, base_radius=3.5, top_radius=2.2,
-        n_sides=8, n_layers=7,
         layer_jitter=0.2, taper_curve=0.6,
         has_cap=False, cap_radius=0.0, cap_height=0.0,
         pointed_top=False,
@@ -76,7 +80,6 @@ _ARCHETYPE_DEFAULTS = {
     ),
     "hoodoo": dict(
         height=8.0, base_radius=1.0, top_radius=0.5,
-        n_sides=8, n_layers=5,
         layer_jitter=0.10, taper_curve=1.2,
         has_cap=True, cap_radius=1.4, cap_height=0.7,
         pointed_top=False,
@@ -184,8 +187,10 @@ class LowPolyRockSpireFactory(AssetFactory):
         height           : float
         base_radius      : float
         top_radius       : float
-        n_sides          : int    cylinder side count
-        n_layers         : int    stack depth (more = smoother profile)
+        polygon_multiplier : float = 1.0   <1 = chunkier, >1 = denser
+        target_edge        : float         absolute world-edge override
+        n_sides          : int     hard override of derived count
+        n_layers         : int     hard override of derived count
         layer_jitter     : float (0..1) per-vertex/ring radial jitter
         taper_curve      : float    >1 narrows faster at top
         has_cap          : bool    hoodoo cap rock
@@ -203,6 +208,8 @@ class LowPolyRockSpireFactory(AssetFactory):
         height: float | None = None,
         base_radius: float | None = None,
         top_radius: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_sides: int | None = None,
         n_layers: int | None = None,
         layer_jitter: float | None = None,
@@ -226,8 +233,21 @@ class LowPolyRockSpireFactory(AssetFactory):
         self.height = float(height if height is not None else d["height"])
         self.base_radius = float(base_radius if base_radius is not None else d["base_radius"])
         self.top_radius = float(top_radius if top_radius is not None else d["top_radius"])
-        self.n_sides = int(n_sides if n_sides is not None else d["n_sides"])
-        self.n_layers = int(n_layers if n_layers is not None else d["n_layers"])
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.base_radius * 2, self.base_radius * 2, self.height),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
+        self.n_sides = int(
+            n_sides if n_sides is not None
+            else n_sides_for_radius(self.base_radius, edge)
+        )
+        self.n_layers = int(
+            n_layers if n_layers is not None
+            else n_along_axis(self.height, edge)
+        )
         self.layer_jitter = float(layer_jitter if layer_jitter is not None else d["layer_jitter"])
         self.taper_curve = float(taper_curve if taper_curve is not None else d["taper_curve"])
         self.has_cap = (

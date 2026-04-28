@@ -40,25 +40,26 @@ from mathutils import Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_along_axis, n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _PALM_ARCHETYPES = ("coconut", "date", "fan_palm")
 
 
+# trunk_segments / trunk_n_sides / frond_segments are bbox-derived. Defaults
+# below carry shape + n_fronds counts (those don't scale with size — palm
+# species fix frond count, not polygon density).
 _ARCHETYPE_DEFAULTS = {
     "coconut": dict(
         trunk_height=8.0,
         trunk_base_radius=0.30,
         trunk_top_radius=0.20,
-        trunk_segments=10,
-        trunk_n_sides=8,
         trunk_curve=1.6,         # horizontal lean of trunk top, m
         trunk_curve_power=1.4,   # >1 = bend grows faster near the top
         n_fronds=10,
         frond_length=3.5,
         frond_base_width=0.30,
-        frond_segments=6,
         frond_droop=1.4,         # radians of curve from base→tip
         frond_pitch=0.25,        # base pitch from horizontal (rad, +=up)
         trunk_color="wood",
@@ -68,14 +69,11 @@ _ARCHETYPE_DEFAULTS = {
         trunk_height=6.0,
         trunk_base_radius=0.32,
         trunk_top_radius=0.26,
-        trunk_segments=8,
-        trunk_n_sides=8,
         trunk_curve=0.5,
         trunk_curve_power=1.2,
         n_fronds=14,
         frond_length=2.8,
         frond_base_width=0.26,
-        frond_segments=5,
         frond_droop=0.9,
         frond_pitch=0.40,
         trunk_color="wood",
@@ -85,14 +83,11 @@ _ARCHETYPE_DEFAULTS = {
         trunk_height=2.2,
         trunk_base_radius=0.32,
         trunk_top_radius=0.28,
-        trunk_segments=4,
-        trunk_n_sides=8,
         trunk_curve=0.0,
         trunk_curve_power=1.0,
         n_fronds=12,
         frond_length=2.0,
         frond_base_width=0.40,
-        frond_segments=4,
         frond_droop=0.4,         # less droop, fronds stay more upright
         frond_pitch=0.7,
         trunk_color="wood",
@@ -251,6 +246,8 @@ class LowPolyPalmTreeFactory(AssetFactory):
         trunk_height: float | None = None,
         trunk_base_radius: float | None = None,
         trunk_top_radius: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         trunk_segments: int | None = None,
         trunk_n_sides: int | None = None,
         trunk_curve: float | None = None,
@@ -280,11 +277,21 @@ class LowPolyPalmTreeFactory(AssetFactory):
         self.trunk_top_radius = float(
             trunk_top_radius if trunk_top_radius is not None else d["trunk_top_radius"]
         )
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.trunk_base_radius * 2, self.trunk_base_radius * 2,
+                 self.trunk_height),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
         self.trunk_segments = int(
-            trunk_segments if trunk_segments is not None else d["trunk_segments"]
+            trunk_segments if trunk_segments is not None
+            else n_along_axis(self.trunk_height, edge, min_n=4)
         )
         self.trunk_n_sides = int(
-            trunk_n_sides if trunk_n_sides is not None else d["trunk_n_sides"]
+            trunk_n_sides if trunk_n_sides is not None
+            else n_sides_for_radius(self.trunk_base_radius, edge, min_n=6)
         )
         self.trunk_curve = float(trunk_curve if trunk_curve is not None else d["trunk_curve"])
         self.trunk_curve_power = float(
@@ -296,7 +303,8 @@ class LowPolyPalmTreeFactory(AssetFactory):
             frond_base_width if frond_base_width is not None else d["frond_base_width"]
         )
         self.frond_segments = int(
-            frond_segments if frond_segments is not None else d["frond_segments"]
+            frond_segments if frond_segments is not None
+            else n_along_axis(self.frond_length, edge, min_n=4)
         )
         self.frond_droop = float(frond_droop if frond_droop is not None else d["frond_droop"])
         self.frond_pitch = float(frond_pitch if frond_pitch is not None else d["frond_pitch"])

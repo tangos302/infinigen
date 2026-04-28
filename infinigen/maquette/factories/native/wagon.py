@@ -32,18 +32,21 @@ import bpy
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_along_axis, n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _WAGON_ARCHETYPES = ("prairie_schooner", "buckboard", "handcart")
 
 
+# n_wheel_sides + cover arc/along subdivisions are bbox-derived. Defaults
+# below are dimensional + behavioral only.
 _ARCHETYPE_DEFAULTS = {
     "prairie_schooner": dict(
         length=2.6, width=1.2, body_height=0.45,
         n_axles=2,
-        wheel_radius=0.50, wheel_thickness=0.10, n_wheel_sides=10,
-        has_cover=True, cover_n_arc=8, cover_n_along=4,
+        wheel_radius=0.50, wheel_thickness=0.10,
+        has_cover=True,
         has_tongue=True, tongue_length=1.4,
         has_handles=False, handle_length=0.0,
         body_color="wood", wheel_color="rust_metal", cover_color="stucco",
@@ -51,8 +54,8 @@ _ARCHETYPE_DEFAULTS = {
     "buckboard": dict(
         length=2.4, width=1.1, body_height=0.30,
         n_axles=2,
-        wheel_radius=0.46, wheel_thickness=0.08, n_wheel_sides=10,
-        has_cover=False, cover_n_arc=0, cover_n_along=0,
+        wheel_radius=0.46, wheel_thickness=0.08,
+        has_cover=False,
         has_tongue=True, tongue_length=1.4,
         has_handles=False, handle_length=0.0,
         body_color="wood", wheel_color="rust_metal", cover_color="stucco",
@@ -60,8 +63,8 @@ _ARCHETYPE_DEFAULTS = {
     "handcart": dict(
         length=1.3, width=0.75, body_height=0.30,
         n_axles=1,
-        wheel_radius=0.40, wheel_thickness=0.07, n_wheel_sides=10,
-        has_cover=False, cover_n_arc=0, cover_n_along=0,
+        wheel_radius=0.40, wheel_thickness=0.07,
+        has_cover=False,
         has_tongue=False, tongue_length=0.0,
         has_handles=True, handle_length=1.1,
         body_color="wood", wheel_color="rust_metal", cover_color="stucco",
@@ -226,6 +229,8 @@ class LowPolyWagonFactory(AssetFactory):
         length: float | None = None,
         width: float | None = None,
         body_height: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_axles: int | None = None,
         wheel_radius: float | None = None,
         wheel_thickness: float | None = None,
@@ -262,17 +267,34 @@ class LowPolyWagonFactory(AssetFactory):
         self.wheel_thickness = float(
             wheel_thickness if wheel_thickness is not None else d["wheel_thickness"]
         )
+        # Bbox-derive wheel + cover subdivisions from the wagon body envelope.
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.length, self.width,
+                 self.body_height + self.wheel_radius * 2),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
         self.n_wheel_sides = int(
-            n_wheel_sides if n_wheel_sides is not None else d["n_wheel_sides"]
+            n_wheel_sides if n_wheel_sides is not None
+            else n_sides_for_radius(self.wheel_radius, edge, min_n=8)
         )
         self.has_cover = (
             bool(has_cover) if has_cover is not None else d["has_cover"]
         )
+        # Cover arc spans ~half a circle of cover_radius ≈ width/2; along
+        # spans the wagon length.
+        cover_arc_span = math.pi * (self.width / 2)
         self.cover_n_arc = int(
-            cover_n_arc if cover_n_arc is not None else d["cover_n_arc"]
+            cover_n_arc if cover_n_arc is not None
+            else (n_along_axis(cover_arc_span, edge, min_n=4)
+                  if self.has_cover else 0)
         )
         self.cover_n_along = int(
-            cover_n_along if cover_n_along is not None else d["cover_n_along"]
+            cover_n_along if cover_n_along is not None
+            else (n_along_axis(self.length, edge, min_n=2)
+                  if self.has_cover else 0)
         )
         self.has_tongue = (
             bool(has_tongue) if has_tongue is not None else d["has_tongue"]

@@ -39,19 +39,21 @@ from mathutils import Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_along_axis, n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _CACTUS_ARCHETYPES = ("saguaro", "barrel")
 
 
+# n_sides + n_layers are bbox-derived. Defaults are dimensional only.
+# Cactus prefers a higher min_n on sides (8) so ribs read as ribs, not
+# pyramids.
 _ARCHETYPE_DEFAULTS = {
     "saguaro": dict(
         height=4.5,
         base_radius=0.50,
         top_radius=0.42,
-        n_sides=10,
-        n_layers=8,
         rib_amplitude=0.10,
         dome_segments=2,
         n_arms=2,
@@ -68,8 +70,6 @@ _ARCHETYPE_DEFAULTS = {
         height=0.9,
         base_radius=0.55,
         top_radius=0.45,
-        n_sides=10,
-        n_layers=4,
         rib_amplitude=0.15,
         dome_segments=2,
         n_arms=0,
@@ -323,6 +323,8 @@ class LowPolyCactusFactory(AssetFactory):
         height: float | None = None,
         base_radius: float | None = None,
         top_radius: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_sides: int | None = None,
         n_layers: int | None = None,
         rib_amplitude: float | None = None,
@@ -349,8 +351,22 @@ class LowPolyCactusFactory(AssetFactory):
         self.height = float(height if height is not None else d["height"])
         self.base_radius = float(base_radius if base_radius is not None else d["base_radius"])
         self.top_radius = float(top_radius if top_radius is not None else d["top_radius"])
-        self.n_sides = int(n_sides if n_sides is not None else d["n_sides"])
-        self.n_layers = int(n_layers if n_layers is not None else d["n_layers"])
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.base_radius * 2, self.base_radius * 2, self.height),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
+        # Cactus ribs need at least 8 sides to read as ribs not facets.
+        self.n_sides = int(
+            n_sides if n_sides is not None
+            else n_sides_for_radius(self.base_radius, edge, min_n=8)
+        )
+        self.n_layers = int(
+            n_layers if n_layers is not None
+            else n_along_axis(self.height, edge, min_n=4)
+        )
         self.rib_amplitude = float(
             rib_amplitude if rib_amplitude is not None else d["rib_amplitude"]
         )

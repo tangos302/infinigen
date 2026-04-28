@@ -36,32 +36,31 @@ from mathutils import Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_along_axis, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _WATER_ARCHETYPES = ("still_lake", "stream", "puddle")
 
 
+# n_segments is bbox-derived. Defaults below carry shape only.
 _ARCHETYPE_DEFAULTS = {
     "still_lake": dict(
         extent=(8.0, 6.0),
         length=None, width=None,
         edge_lift=0.0, edge_jitter=0.25,
-        n_segments=4,
         water_color="water",
     ),
     "stream": dict(
         extent=None,
         length=12.0, width=1.6,
         edge_lift=0.0, edge_jitter=0.10,
-        n_segments=8,
         water_color="water",
     ),
     "puddle": dict(
         extent=(1.5, 1.0),
         length=None, width=None,
         edge_lift=0.0, edge_jitter=0.18,
-        n_segments=2,
         water_color="water",
     ),
 }
@@ -169,6 +168,8 @@ class LowPolyWaterSurfaceFactory(AssetFactory):
         width: float | None = None,
         edge_lift: float | None = None,
         edge_jitter: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_segments: int | None = None,
         water_color: str | None = None,
         coarse: bool = False,
@@ -195,8 +196,19 @@ class LowPolyWaterSurfaceFactory(AssetFactory):
         self.edge_jitter = float(
             edge_jitter if edge_jitter is not None else d["edge_jitter"]
         )
+        # Bbox-derived segment count using the smaller axis as scale anchor;
+        # _build later still oversamples streams along the long axis.
+        sx, sy = self.extent
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (sx, sy, max(sx, sy) * 0.1),
+                polygon_multiplier=polygon_multiplier,
+            )
+        )
         self.n_segments = int(
-            n_segments if n_segments is not None else d["n_segments"]
+            n_segments if n_segments is not None
+            else n_along_axis(min(sx, sy), edge, min_n=2)
         )
         self.water_color = water_color or d["water_color"]
 

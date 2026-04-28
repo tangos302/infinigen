@@ -34,23 +34,26 @@ from mathutils import Matrix, Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
+from ...density import n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
 _WINDMILL_ARCHETYPES = ("dutch", "western_pump", "stone_mill")
 
 
+# n_tower_sides for round-tower archetypes is bbox-derived. western_pump
+# uses a 4-post lattice tower, where n_tower_sides is unused.
 _ARCHETYPE_DEFAULTS = {
     "dutch": dict(
         tower_height=5.5, tower_top_radius=0.7, tower_bottom_radius=1.2,
-        n_tower_sides=8, n_blades=4, blade_length=2.8, blade_width=0.45,
+        n_blades=4, blade_length=2.8, blade_width=0.45,
         blade_thickness=0.08, blade_phase=0.0, hub_radius=0.18,
         has_dome=True, dome_height=0.8,
         tower_color="rock_pale", blade_color="wood", roof_color="rock_shadow",
     ),
     "western_pump": dict(
         tower_height=4.5, tower_top_radius=0.35, tower_bottom_radius=0.9,
-        n_tower_sides=4, n_blades=6, blade_length=0.9, blade_width=0.18,
+        n_blades=6, blade_length=0.9, blade_width=0.18,
         blade_thickness=0.04, blade_phase=0.0, hub_radius=0.1,
         has_dome=False, dome_height=0.0,
         tower_color="rust_metal", blade_color="rust_metal",
@@ -58,7 +61,7 @@ _ARCHETYPE_DEFAULTS = {
     ),
     "stone_mill": dict(
         tower_height=3.5, tower_top_radius=1.0, tower_bottom_radius=1.4,
-        n_tower_sides=8, n_blades=4, blade_length=2.2, blade_width=0.4,
+        n_blades=4, blade_length=2.2, blade_width=0.4,
         blade_thickness=0.08, blade_phase=0.0, hub_radius=0.18,
         has_dome=False, dome_height=0.6,
         tower_color="rock_warm", blade_color="wood",
@@ -304,6 +307,8 @@ class LowPolyWindmillFactory(AssetFactory):
         tower_height: float | None = None,
         tower_top_radius: float | None = None,
         tower_bottom_radius: float | None = None,
+        polygon_multiplier: float = 1.0,
+        target_edge: float | None = None,
         n_tower_sides: int | None = None,
         n_blades: int | None = None,
         blade_length: float | None = None,
@@ -335,9 +340,24 @@ class LowPolyWindmillFactory(AssetFactory):
         self.tower_bottom_radius = float(
             tower_bottom_radius if tower_bottom_radius is not None else d["tower_bottom_radius"]
         )
-        self.n_tower_sides = int(
-            n_tower_sides if n_tower_sides is not None else d["n_tower_sides"]
+        # Tower n_sides bbox-derived from the larger (bottom) radius.
+        # western_pump uses a lattice tower so the value is unused there.
+        edge = (
+            float(target_edge) if target_edge is not None
+            else target_edge_for_bbox(
+                (self.tower_bottom_radius * 2, self.tower_bottom_radius * 2,
+                 self.tower_height),
+                polygon_multiplier=polygon_multiplier,
+            )
         )
+        if n_tower_sides is not None:
+            self.n_tower_sides = int(n_tower_sides)
+        elif "n_tower_sides" in d:
+            self.n_tower_sides = int(d["n_tower_sides"])
+        else:
+            self.n_tower_sides = n_sides_for_radius(
+                self.tower_bottom_radius, edge, min_n=6,
+            )
         self.n_blades = int(n_blades if n_blades is not None else d["n_blades"])
         self.blade_length = float(
             blade_length if blade_length is not None else d["blade_length"]
