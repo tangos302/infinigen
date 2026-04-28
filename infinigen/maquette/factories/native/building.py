@@ -53,27 +53,27 @@ _BUILDING_ARCHETYPES = ("cottage", "barn", "tower", "cabin", "longhouse")
 _ARCHETYPE_DEFAULTS = {
     "cottage": dict(
         width=4.0, depth=3.0, wall_height=2.5, roof_height=1.6,
-        roof_archetype="gabled", n_windows=4,
+        roof_archetype="gabled", n_windows=4, has_chimney=True,
     ),
     "barn": dict(
         # Long + low + steep gabled — silhouette dominated by the roof
         width=7.0, depth=3.5, wall_height=2.2, roof_height=2.6,
-        roof_archetype="gabled", n_windows=2,
+        roof_archetype="gabled", n_windows=2, has_chimney=False,
     ),
     "tower": dict(
         # Square footprint, tall walls, peaked hipped — guard tower feel
         width=2.6, depth=2.6, wall_height=5.0, roof_height=2.0,
-        roof_archetype="hipped", n_windows=4,
+        roof_archetype="hipped", n_windows=4, has_chimney=False,
     ),
     "cabin": dict(
         # Small, snug, basic gabled — Firewatch lookout cabin
         width=3.0, depth=3.0, wall_height=2.2, roof_height=1.4,
-        roof_archetype="gabled", n_windows=2,
+        roof_archetype="gabled", n_windows=2, has_chimney=True,
     ),
     "longhouse": dict(
         # 2-story-ish wide rectangle, hipped — manor / lodge feel
         width=6.0, depth=4.0, wall_height=3.5, roof_height=1.8,
-        roof_archetype="hipped", n_windows=6,
+        roof_archetype="hipped", n_windows=6, has_chimney=True,
     ),
 }
 
@@ -226,6 +226,47 @@ def _add_door(
     return _bm_face_count(bm) - n_before
 
 
+def _add_chimney(
+    bm: bmesh.types.BMesh,
+    width: float,
+    depth: float,
+    wall_height: float,
+    roof_height: float,
+    chimney_w: float = 0.45,
+    chimney_h: float = 1.6,
+    side_offset: float = 0.6,
+) -> int:
+    """Square chimney box rising from the roof. Placed offset toward one
+    side of the building (not centered) for character. Sized for visible
+    silhouette without dominating."""
+    n_before = _bm_face_count(bm)
+    # Anchor point: on the roof, offset along X toward one wall
+    base_x = width / 2 - side_offset - chimney_w / 2
+    base_y = 0.0
+    base_z = wall_height + roof_height * 0.45  # plant chimney mid-roof
+    hx = chimney_w / 2
+    hy = chimney_w / 2
+    z0 = base_z
+    z1 = base_z + chimney_h
+    # 8 corners of a small box
+    v000 = bm.verts.new((base_x - hx, base_y - hy, z0))
+    v100 = bm.verts.new((base_x + hx, base_y - hy, z0))
+    v110 = bm.verts.new((base_x + hx, base_y + hy, z0))
+    v010 = bm.verts.new((base_x - hx, base_y + hy, z0))
+    v001 = bm.verts.new((base_x - hx, base_y - hy, z1))
+    v101 = bm.verts.new((base_x + hx, base_y - hy, z1))
+    v111 = bm.verts.new((base_x + hx, base_y + hy, z1))
+    v011 = bm.verts.new((base_x - hx, base_y + hy, z1))
+    bm.verts.ensure_lookup_table()
+    # 4 sides + top (skip bottom — buried in roof)
+    bm.faces.new((v000, v100, v101, v001))
+    bm.faces.new((v100, v110, v111, v101))
+    bm.faces.new((v110, v010, v011, v111))
+    bm.faces.new((v010, v000, v001, v011))
+    bm.faces.new((v001, v101, v111, v011))
+    return _bm_face_count(bm) - n_before
+
+
 def _add_windows(
     bm: bmesh.types.BMesh,
     width: float,
@@ -289,6 +330,7 @@ class LowPolyHouseFactory(AssetFactory):
         wall_height: float | None = None,
         roof_height: float | None = None,
         n_windows: int | None = None,
+        has_chimney: bool | None = None,
         wall_color: str | None = "rock_pale",
         roof_color: str | None = "rock_shadow",
         accent_color: str | None = "accent_red",
@@ -315,6 +357,7 @@ class LowPolyHouseFactory(AssetFactory):
         self.wall_height = float(wall_height if wall_height is not None else d["wall_height"])
         self.roof_height = float(roof_height if roof_height is not None else d["roof_height"])
         self.n_windows = int(n_windows if n_windows is not None else d["n_windows"])
+        self.has_chimney = bool(has_chimney if has_chimney is not None else d["has_chimney"])
         self.wall_color = wall_color
         self.roof_color = roof_color
         self.accent_color = accent_color
@@ -354,6 +397,12 @@ class LowPolyHouseFactory(AssetFactory):
         _add_windows(bm, self.width, self.depth, self.wall_height,
                      self.n_windows, rng)
         face_count_open_end = _bm_face_count(bm)
+
+        # 4. Optional chimney (rises from roof; chimney faces inherit the
+        # default material_index=0, so they pick up the wall_color slot).
+        if self.has_chimney and self.roof_archetype != "flat":
+            _add_chimney(bm, self.width, self.depth,
+                         self.wall_height, self.roof_height)
 
         # Convert to mesh + object
         me = bpy.data.meshes.new(f"LowPolyHouse({self.factory_seed})_Mesh")
