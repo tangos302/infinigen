@@ -140,6 +140,33 @@ NEW factories discovered: `LowPolyBrokenWallFactory`,
 `LowPolyVineFactory`, `LowPolyTombstoneFactory`,
 `LowPolyAltarFactory`, `LowPolyRubbleFactory`.
 
+### Attempt 14 — re-run pirate cove with Boat + Deck
+
+Built 2026-04-28 after shipping LowPolyBoatFactory and
+LowPolyDeckFactory. Same cove layout as Attempt 13 plus:
+
+- ✅ Pirate brig anchored offshore (mast + sail + bowsprit)
+- ✅ Wooden pier extending from the beach into the water
+- ✅ Rowboat moored at the pier
+- ✅ Beached rowboat on the sand
+- ✅ Upturned dinghy on the beach
+- ✅ Jolly-Roger flag-pole (dark `rock_shadow` cloth) on the brig
+     using existing Banner factory — confirms Banner+color = flag
+- Saved: `_artifacts/maquette/prompt_pirate_cove_v2.{png,blend}`
+
+**Result**: scene reads as "pirate cove with a moored ship" — the
+brig with sail dominates the silhouette and the pier+boat
+combination locks in the harbor narrative. Major upgrade over
+Attempt 13's "village by water".
+
+**Remaining gaps** (low priority): PalmTree (umbrella substitution
+works OK), TreasureChest (metal crates work OK), Cannon, Anchor,
+SandDune. The scene already reads as pirate-cove without them.
+
+The Banner factory's flag-pole archetype handily covered "Jolly
+Roger" by varying cloth_color — confirms the spec note that
+JollyRoger should fold into Banner rather than its own factory.
+
 ### Attempt 13 — "small pirate cove with a wooden pier"
 
 Built 2026-04-28. Customer prompt: "small pirate cove with a wooden
