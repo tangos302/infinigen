@@ -71,6 +71,164 @@ def apply_palette(obj: bpy.types.Object, palette_key: str) -> bpy.types.Object:
     return obj
 
 
+_SNOW_ROCK_MAT_PREFIX = "Maquette_snow_rock_"
+
+
+def _get_or_create_snow_rock_material(
+    snow_line: float = 20.0,
+    snow_band: float = 4.0,
+    rock_color: tuple[float, float, float, float] = (0.45, 0.43, 0.42, 1.0),
+    snow_color: tuple[float, float, float, float] = (0.95, 0.96, 0.98, 1.0),
+) -> bpy.types.Material:
+    """Two-tone height-banded material: rock below `snow_line` meters,
+    snow above. The transition band (`snow_band` meters wide, centered
+    on the snow line) is quantized to a 2-stop hard ColorRamp so it
+    reads as a flat painterly snow line, not a smooth gradient.
+
+    Use for alpine, snowy mountain, glacier, fjord cliff scenes. The Z
+    threshold is in *world* coordinates so set the snow line based on
+    the scene's actual peak elevations.
+
+    Cached per (snow_line, snow_band) tuple so repeated calls reuse
+    the same material data block.
+    """
+    name = f"{_SNOW_ROCK_MAT_PREFIX}{snow_line:g}_{snow_band:g}"
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.inputs["Roughness"].default_value = 0.85
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["IOR"].default_value = 1.45
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    # Geometry > Position → Separate XYZ → Z fed into Map Range to
+    # normalise [snow_line - band/2, snow_line + band/2] → [0, 1] →
+    # ColorRamp Constant interpolation with 2 stops (rock at 0, snow
+    # at the threshold). The band gives some bedding allowance — small
+    # rocks pierce the snow at the transition.
+    geom = nt.nodes.new("ShaderNodeNewGeometry")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(geom.outputs["Position"], sep.inputs["Vector"])
+    map_range = nt.nodes.new("ShaderNodeMapRange")
+    band = max(float(snow_band), 0.5)
+    map_range.inputs["From Min"].default_value = float(snow_line) - band * 0.5
+    map_range.inputs["From Max"].default_value = float(snow_line) + band * 0.5
+    map_range.inputs["To Min"].default_value = 0.0
+    map_range.inputs["To Max"].default_value = 1.0
+    nt.links.new(sep.outputs["Z"], map_range.inputs["Value"])
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.interpolation = "CONSTANT"
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = rock_color
+    ramp.color_ramp.elements[1].position = 0.5
+    ramp.color_ramp.elements[1].color = snow_color
+    nt.links.new(map_range.outputs["Result"], ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+
+    return mat
+
+
+def apply_snow_rock_material(
+    obj: bpy.types.Object,
+    snow_line: float = 20.0,
+    snow_band: float = 4.0,
+) -> bpy.types.Object:
+    """Replace `obj`'s materials with a height-banded snow/rock
+    material. Snow line is in world Z meters; everything above
+    (with a soft `snow_band` transition) is white snow, everything
+    below is gray rock.
+    """
+    if obj.type != "MESH":
+        return obj
+    mat = _get_or_create_snow_rock_material(snow_line=snow_line, snow_band=snow_band)
+    obj.data.materials.clear()
+    obj.data.materials.append(mat)
+    return obj
+
+
+_SNOW_SLOPE_MAT_PREFIX = "Maquette_snow_slope_"
+
+
+def _get_or_create_snow_slope_material(
+    slope_threshold: float = 0.65,
+    rock_color: tuple[float, float, float, float] = (0.32, 0.30, 0.30, 1.0),
+    snow_color: tuple[float, float, float, float] = (0.97, 0.97, 0.99, 1.0),
+) -> bpy.types.Material:
+    """Slope-aware snow/rock — snow accumulates on top-facing
+    surfaces, rock shows on steep faces. Normal-Z (cosine of angle
+    from vertical) drives a Constant-interp ColorRamp:
+
+      Normal.Z > slope_threshold  → flat enough → snow
+      Normal.Z ≤ slope_threshold  → too steep   → rock
+
+    This is the dominant way real snow accumulates and the look
+    every stylised low-poly snow scene uses (per reference image
+    on prompt #3 — snowy alpine pass): cones show rocky faces on
+    their slopes, snowy caps on the flatter top areas, and the
+    valley floor is fully snow because it's flat.
+
+    `slope_threshold` 0.65 ≈ 49° from vertical; tune lower for
+    less rock visible (only the very steepest faces), higher for
+    more (rock on moderate slopes too).
+    """
+    name = f"{_SNOW_SLOPE_MAT_PREFIX}{slope_threshold:g}"
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.inputs["Roughness"].default_value = 0.85
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["IOR"].default_value = 1.45
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    # Geometry > Normal → Separate XYZ → Z component (cosine of angle
+    # from world up). Constant-interp ColorRamp quantizes to 2 stops:
+    # rock below threshold, snow above.
+    geom = nt.nodes.new("ShaderNodeNewGeometry")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(geom.outputs["Normal"], sep.inputs["Vector"])
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.interpolation = "CONSTANT"
+    ramp.color_ramp.elements[0].position = 0.0
+    ramp.color_ramp.elements[0].color = rock_color
+    ramp.color_ramp.elements[1].position = float(slope_threshold)
+    ramp.color_ramp.elements[1].color = snow_color
+    nt.links.new(sep.outputs["Z"], ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"], bsdf.inputs["Base Color"])
+
+    return mat
+
+
+def apply_snow_slope_material(
+    obj: bpy.types.Object,
+    slope_threshold: float = 0.65,
+) -> bpy.types.Object:
+    """Replace `obj`'s materials with a slope-aware snow/rock material.
+    Steep faces (cosine of angle-from-vertical < `slope_threshold`)
+    show rock; flatter faces show snow. See
+    `_get_or_create_snow_slope_material` for tuning notes.
+    """
+    if obj.type != "MESH":
+        return obj
+    mat = _get_or_create_snow_slope_material(slope_threshold=slope_threshold)
+    obj.data.materials.clear()
+    obj.data.materials.append(mat)
+    return obj
+
+
 _WATER_MAT_NAME = "Maquette_water_translucent"
 
 

@@ -48,7 +48,10 @@ from .features import (
     Lake,
     MesaCluster,
     MountainPeak,
+    MountainRidge,
     Quarry,
+    TerracedPeak,
+    Trail,
 )
 from .marching import build_mesh, mesh_to_blender, surface_height_at
 
@@ -69,10 +72,13 @@ __all__ = [
     "MesaCluster",
     "MesaPlateauBase",
     "MountainPeak",
+    "MountainRidge",
     "OceanBase",
     "Quarry",
     "RollingHillsBase",
+    "TerracedPeak",
     "TerrainBase",
+    "Trail",
     "base_from_name",
     "build_mesh",
     "mesh_to_blender",

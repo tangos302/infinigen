@@ -564,6 +564,8 @@ def low_freq_noise_2d(
     feature_scale: float = 30.0,
     amplitude: float = 1.0,
     grid_size: int = 8,
+    offset: float = 1000.0,
+    tile: bool = False,
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
     """A genuinely-low-frequency 2D smooth-noise sampler.
 
@@ -586,8 +588,24 @@ def low_freq_noise_2d(
     grid = rng.random((grid_size, grid_size), dtype=np.float32) * 2.0 - 1.0
 
     def h(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        u = (x / feature_scale) % 1.0 * (grid_size - 1)
-        v = (y / feature_scale) % 1.0 * (grid_size - 1)
+        if tile:
+            # Tiling mode: modulo wraps at every feature_scale meters.
+            # The +offset shifts the wrap point but a non-multiple offset
+            # creates wraps inside the visible range (visible as
+            # straight cuts splitting the terrain). Avoid for terrain
+            # bases — use tile=False (default) instead.
+            u = ((x + offset) / feature_scale) % 1.0 * (grid_size - 1)
+            v = ((y + offset) / feature_scale) % 1.0 * (grid_size - 1)
+        else:
+            # Non-tiling: grid is centered on origin and `clip`-clamped
+            # at the edges — no modulo discontinuity. Effective grid
+            # span = feature_scale * (grid_size - 1) meters; for
+            # extents within that span, every sample lands inside the
+            # grid with no wrap. Pick feature_scale * (grid_size-1) >
+            # extent for clean coverage.
+            half_grid = (grid_size - 1) * 0.5
+            u = np.clip(x / feature_scale + half_grid, 0.0, grid_size - 1)
+            v = np.clip(y / feature_scale + half_grid, 0.0, grid_size - 1)
         i = u.astype(np.int32)
         j = v.astype(np.int32)
         i1 = (i + 1) % grid_size

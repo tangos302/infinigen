@@ -119,6 +119,7 @@ class LowPolyTerrainFactory(AssetFactory):
                 self.extent,
                 self.factory_seed,
                 existing_keep_outs=list(keep_out_zones),
+                prev_height_fn=height_fn,
             )
             for spec in specs:
                 terrain_sdf = _apply_op(terrain_sdf, spec)
@@ -200,4 +201,11 @@ def _apply_op(running_sdf, spec: FeatureSpec):
         return sdf_lib.smooth_union(spec.blend, running_sdf, spec.sdf)
     if spec.op == "smooth_subtract":
         return sdf_lib.smooth_subtract(spec.blend, running_sdf, spec.sdf)
+    if spec.op == "intersect":
+        return sdf_lib.intersect(running_sdf, spec.sdf)
+    if spec.op == "smooth_intersect":
+        # No smooth_intersect helper; intersect is `max(a, b)` and the
+        # surface is C0 — fine for our trail use case where we want the
+        # lower-of-two surfaces with sharp corridor edges anyway.
+        return sdf_lib.intersect(running_sdf, spec.sdf)
     raise ValueError(f"unknown compose op {spec.op!r}")

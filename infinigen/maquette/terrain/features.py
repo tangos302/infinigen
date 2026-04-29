@@ -882,50 +882,904 @@ class IslandCluster:
         )]
 
 
+def _faceted_peak_sdf(
+    cx: float, cy: float, h_total: float, base_r: float,
+    *,
+    n_facets: int = 8,
+    tilt_min: float = 55.0,
+    tilt_max: float = 70.0,
+    apex_lateral_jitter: float = 0.20,
+    apex_vertical_jitter: float = 0.15,
+    rng: random.Random | None = None,
+):
+    """A faceted alpine peak built as the intersection of `n_facets`
+    tilted half-planes — each plane IS a facet, every edge between
+    adjacent planes is a mathematically sharp ridge. Marching cubes +
+    planar decimate preserves these almost losslessly.
+
+    Construction (per `project_faceted_peak_recipe`):
+      - Azimuths sampled at golden-angle increments (137.5°) for
+        natural-looking irregular spacing — pure uniform reads as
+        rotational symmetry / "procedural pinwheel".
+      - Tilts in [tilt_min, tilt_max]° from horizontal; varied per
+        plane so adjacent slabs meet at non-uniform ridge angles.
+      - Per-plane apex offsets (lateral + vertical) break the perfect
+        cone apex into a small jagged crown — Matterhorn / Eiger
+        silhouette.
+
+    The SDF is `max_i (dot(p - anchor_i, n_i))` for the upper facets,
+    clipped from below by the ground (`z`). Returned SDF is well-
+    behaved as a vertical-distance proxy near the iso-surface — does
+    NOT compute Euclidean distance globally, but iso-surface position
+    is correct.
+    """
+    if rng is None:
+        rng = random.Random()
+    apex_x = float(cx)
+    apex_y = float(cy)
+    apex_z = float(h_total)
+    base_r_f = float(base_r)
+    h_f = float(h_total)
+    far_below = -500.0
+
+    # Build planes: each plane is defined by an azimuth, tilt, and
+    # an apex anchor offset. Plane equation: dot(p - anchor, n) = 0,
+    # where n points OUTWARD from the peak interior.
+    GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))  # ~137.5° in radians
+    az0 = rng.uniform(0.0, 2.0 * math.pi)
+    planes = []
+    for i in range(n_facets):
+        az = (az0 + i * GOLDEN_ANGLE) % (2.0 * math.pi)
+        tilt = rng.uniform(tilt_min, tilt_max)
+        # Tilt is angle of FACE (slope). The outward normal is tilted
+        # back from horizontal by (90 - tilt)°. So normal makes angle
+        # (90 - tilt)° with horizontal, projected on (cos az, sin az)
+        # in the radial direction, with positive Z.
+        face_slope_rad = math.radians(tilt)
+        nz = math.cos(face_slope_rad)  # ~0.34-0.57
+        n_horizontal = math.sin(face_slope_rad)  # ~0.82-0.94
+        nx = n_horizontal * math.cos(az)
+        ny = n_horizontal * math.sin(az)
+        # Per-plane apex jitter
+        lat_mag = rng.uniform(0.0, apex_lateral_jitter * base_r_f)
+        lat_az = rng.uniform(0.0, 2.0 * math.pi)
+        ax = apex_x + lat_mag * math.cos(lat_az)
+        ay = apex_y + lat_mag * math.sin(lat_az)
+        az_z = apex_z + rng.uniform(-apex_vertical_jitter * h_f,
+                                    apex_vertical_jitter * h_f)
+        # Pre-compute the constant term so SDF is just nx*x + ny*y + nz*z + c
+        c = -(nx * ax + ny * ay + nz * az_z)
+        planes.append((float(nx), float(ny), float(nz), float(c)))
+
+    # XY footprint check: outside base_r * some_factor, "no surface".
+    # We use a soft outer cylinder cutoff so the peak doesn't extend
+    # infinitely along all the half-spaces.
+    cutoff_r = base_r_f * 1.05
+
+    def f(p):
+        x = p[..., 0]
+        y = p[..., 1]
+        z = p[..., 2]
+        dx = x - np.float32(apex_x)
+        dy = y - np.float32(apex_y)
+        r_xy = np.sqrt(dx * dx + dy * dy + 1e-8).astype(np.float32)
+        # Half-space intersection: SDF = max over all planes of
+        # nx*x + ny*y + nz*z + c. Negative inside the convex peak
+        # region, positive outside any plane.
+        intersection = np.full_like(x, -1e9, dtype=np.float32)
+        for nx, ny, nz, c in planes:
+            val = (np.float32(nx) * x + np.float32(ny) * y + np.float32(nz) * z + np.float32(c)).astype(np.float32)
+            intersection = np.maximum(intersection, val)
+        # Outer cutoff — outside the cylinder radius, surface drops to
+        # far_below so the peak silhouette terminates at the apron.
+        outside_mask = r_xy > cutoff_r
+        return np.where(
+            outside_mask,
+            np.float32(1e3) + r_xy - cutoff_r,
+            intersection,
+        ).astype(np.float32)
+
+    return f
+
+
+def _ridged_cone_sdf(
+    cx: float, cy: float, h_total: float, base_r: float,
+    *,
+    tip_frac: float = 0.06,
+    taper: float = 0.90,
+    ridge_amp: float = 0.25,
+    ridge_freq: float = 1.0,
+    ridge_octaves: int = 1,
+    ridge_persistence: float = 0.20,
+    apex_sharp: float = 0.7,
+    seed: int = 0,
+):
+    """Build the SDF of a single ridged cone (cone profile + Musgrave
+    `1 - |noise|` ridges in cylindrical theta-h space). Used as the
+    building block for `MountainPeak` — a peak is composed of a main
+    ridged cone + sub-summit cones + thin spike cones + flat ledge
+    cylinders, all smooth-unioned.
+    """
+    far_below = -500.0
+    ridge_grids = []
+    for o in range(ridge_octaves):
+        ridge_grids.append(sdf_lib.low_freq_noise_2d(
+            seed=seed + 7 * o, feature_scale=1.0, amplitude=1.0, grid_size=5,
+        ))
+    theta_warp = sdf_lib.low_freq_noise_2d(
+        seed=seed + 999, feature_scale=1.0, amplitude=1.0, grid_size=8,
+    )
+    base_r_f = float(base_r)
+    cx_f = float(cx)
+    cy_f = float(cy)
+    h_f = float(h_total)
+    taper_f = float(taper)
+    tip_frac_f = float(tip_frac)
+    ridge_amp_f = float(ridge_amp)
+    ridge_freq_f = float(ridge_freq)
+    apex_sharp_f = float(apex_sharp)
+    persistence = float(ridge_persistence)
+
+    def f(p):
+        x = p[..., 0]
+        y = p[..., 1]
+        z = p[..., 2]
+        dx = (x - cx_f).astype(np.float32)
+        dy = (y - cy_f).astype(np.float32)
+        r_xy = np.sqrt(dx * dx + dy * dy + 1e-8).astype(np.float32)
+        theta = np.arctan2(dy, dx).astype(np.float32)
+        theta_norm = (theta / np.float32(2.0 * np.pi)) % 1.0
+        cone_ratio_pre = np.clip(
+            (base_r_f - r_xy) / max(base_r_f * taper_f, 0.001),
+            0.0, 1.0,
+        )
+        h_norm = cone_ratio_pre.astype(np.float32)
+        theta_warp_amount = theta_warp(theta_norm * 1.0, h_norm * 1.0)
+        theta_warped = (theta_norm + np.float32(0.06) * theta_warp_amount) % 1.0
+        ridge_value = np.zeros_like(theta_norm, dtype=np.float32)
+        ridge_weight_sum = np.float32(0.0)
+        weight = np.float32(1.0)
+        freq = np.float32(ridge_freq_f)
+        for grid_fn in ridge_grids:
+            n = grid_fn(theta_warped * freq, h_norm * freq * 0.4)
+            ridge_value = ridge_value + weight * (np.float32(1.0) - np.abs(n))
+            ridge_weight_sum = ridge_weight_sum + weight
+            weight = weight * np.float32(persistence)
+            freq = freq * np.float32(2.5)
+        ridge_value = ridge_value / ridge_weight_sum
+        amp_at_h = np.float32(ridge_amp_f) * np.power(
+            1.0 - h_norm, np.float32(apex_sharp_f)
+        ).astype(np.float32)
+        r_eff_base = base_r_f * (1.0 - amp_at_h * ridge_value)
+        denom = np.maximum(r_eff_base * np.float32(taper_f), 0.001)
+        ratio = np.clip((r_eff_base - r_xy) / denom, 0.0, 1.0)
+        cap = 1.0 - np.float32(tip_frac_f)
+        tip_band = np.float32(tip_frac_f)
+        in_tip = ratio > cap
+        tip_t = np.clip((ratio - cap) / np.maximum(tip_band, 0.001), 0.0, 1.0)
+        tip_t_smooth = tip_t * tip_t * (3.0 - 2.0 * tip_t)
+        ratio_eff = np.where(in_tip, cap + tip_band * tip_t_smooth, ratio).astype(np.float32)
+        surface_z = np.where(
+            r_xy < r_eff_base,
+            h_f * ratio_eff,
+            np.float32(far_below),
+        ).astype(np.float32)
+        return (z - surface_z).astype(np.float32)
+    return f
+
+
+def _ledge_disk_sdf(cx: float, cy: float, top_z: float, radius: float, rim_band: float = 1.5):
+    """A small flat-topped disk used as a "walkable plateau" appendage
+    on the side of a peak. Height-field SDF — surface at top_z within
+    the disk, smoothly drops to far_below outside.
+    """
+    far_below = -500.0
+    cx_f, cy_f, top_zf, r_f, rim_f = float(cx), float(cy), float(top_z), float(radius), float(rim_band)
+
+    def f(p):
+        x = p[..., 0]
+        y = p[..., 1]
+        z = p[..., 2]
+        dx = (x - cx_f).astype(np.float32)
+        dy = (y - cy_f).astype(np.float32)
+        r_xy = np.sqrt(dx * dx + dy * dy + 1e-8).astype(np.float32)
+        # Inside the disk (r_xy < r_f): surface at top_z.
+        # Smooth drop band: r_f to r_f + rim_f, surface from top_z to far_below.
+        plateau_t = np.clip((r_f - r_xy) / max(rim_f, 0.5), 0.0, 1.0).astype(np.float32)
+        plateau_t = (plateau_t * plateau_t * (3.0 - 2.0 * plateau_t)).astype(np.float32)
+        drop_t = np.clip((r_xy - r_f) / max(rim_f, 0.5), 0.0, 1.0).astype(np.float32)
+        drop_t = (drop_t * drop_t * (3.0 - 2.0 * drop_t)).astype(np.float32)
+        surface_z = (
+            np.float32(top_zf) * plateau_t
+            + np.float32(far_below) * drop_t
+        ).astype(np.float32)
+        return (z - surface_z).astype(np.float32)
+    return f
+
+
 @dataclass
 class MountainPeak:
-    """A single tall conical peak — for hero summit shots."""
+    """A composite alpine peak — main summit + sub-summits + thin
+    rocky spike outcrops + small walkable ledge plateaus, all
+    smooth-unioned. Each cone uses Musgrave ridged noise (theta-h
+    space) for faceted spine ridges. The composition gives the
+    multi-spire silhouette real mountains have (Matterhorn /
+    Mont Blanc / Mt. Cook style).
+
+    Per user direction (2026-04-29 — "they should not just be cones,
+    they should be composed of several sub peaks, rocky spikes, and
+    even some walkable small plateau area around it").
+
+    Tuning knobs:
+      `n_sub_summits` — 1-3 secondary lower summits offset around main
+      `n_spikes`      — 2-4 thin tall spikes scattered on upper slopes
+      `n_ledges`      — 1-2 walkable flat plateaus at intermediate z
+      The cone-shape knobs (tip_frac, cone_taper, ridge_*, apex_sharp)
+      apply to the main summit; sub-summits inherit a randomised version.
+    """
 
     center: tuple[float, float] = (0.0, 0.0)
     height: ScalarOrRange = (20.0, 30.0)
     base_radius: ScalarOrRange = (12.0, 18.0)
-    peak_radius: ScalarOrRange = (1.0, 2.5)
-    blend: ScalarOrRange = (3.0, 5.0)
+    tip_frac: ScalarOrRange = (0.04, 0.10)
+    cone_taper: ScalarOrRange = (0.85, 0.95)
+    # Default to FEW, BIG ridges (not many small spikes) — that's what
+    # reads as rocky alpine peak. Ridge_freq=2 gives ~4-5 main spines
+    # per face; octaves=2 adds a single secondary detail band. Higher
+    # numbers produce "crumpled cauliflower" under marching-cubes /
+    # decimate.
+    ridge_amplitude: ScalarOrRange = (0.22, 0.32)
+    # 2 octaves: dominant ~5-spine silhouette + a secondary detail
+    # band that breaks the smooth slabs between ridges into small
+    # rocky irregularities (per user direction 2026-04-29 — "rocky
+    # irregularities like actual mountains").
+    ridge_octaves: int = 2
+    ridge_freq: ScalarOrRange = (0.9, 1.2)
+    # Persistence drops second octave's contribution — keep it subtle
+    # so we don't slip back into the v9-v11 cauliflower territory.
+    # 0.20 gives just enough rocky variation to read as "actual
+    # mountain" without flooding the slope-snow shader with steep
+    # micro-facets.
+    ridge_persistence: float = 0.20
+    apex_sharpness: ScalarOrRange = (0.65, 0.85)
+    blend: ScalarOrRange = (1.5, 3.0)
+    n_sub_summits: IntOrRange = (1, 3)
+    n_spikes: IntOrRange = (2, 4)
+    n_ledges: IntOrRange = (1, 2)
 
     def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 7)
         h = _sample(self.height, rng)
         base_r = _sample(self.base_radius, rng)
-        peak_r = _sample(self.peak_radius, rng)
+        tip_frac = _sample(self.tip_frac, rng)
+        taper = _sample(self.cone_taper, rng)
+        ridge_amp = _sample(self.ridge_amplitude, rng)
+        ridge_freq = _sample(self.ridge_freq, rng)
+        apex_sharp = _sample(self.apex_sharpness, rng)
         blend = _sample(self.blend, rng)
+        n_subs = _sample(self.n_sub_summits, rng)
+        n_spikes = _sample(self.n_spikes, rng)
+        n_ledges = _sample(self.n_ledges, rng)
         cx, cy = self.center
 
-        lower = sdf_lib.cylinder(
-            radius=base_r, height=h * 0.4,
-            center=(cx, cy, h * 0.2),
-        )
-        upper = sdf_lib.cylinder(
-            radius=(base_r + peak_r) * 0.5, height=h * 0.4,
-            center=(cx, cy, h * 0.6),
-        )
-        tip = sdf_lib.cylinder(
-            radius=peak_r, height=h * 0.2,
-            center=(cx, cy, h * 0.9),
-        )
-        peak_sdf = sdf_lib.union(lower, upper, tip)
+        components = []
+        # Component construction follows the research recipe in
+        # `project_faceted_peak_recipe` — multi-summit composition with
+        # power-law height hierarchy, faceted half-plane shells for the
+        # primary summit shape, and walkable disk ledges as terraces.
+        #
+        # The faceted SDF is the primary architecture (planar shells
+        # survive marching-cubes + planar-decimate cleanly as sharp
+        # ridges); ridged-noise cones are kept only for the small
+        # spike outcrops where their organic look helps.
+
+        # 1. Main faceted summit at h=1.0. Tight vertical jitter so
+        # the planes converge near the apex instead of capping the
+        # peak at the lowest plane's anchor.
+        components.append(_faceted_peak_sdf(
+            cx, cy, h, base_r,
+            n_facets=8,
+            tilt_min=62.0, tilt_max=76.0,
+            apex_lateral_jitter=0.10,
+            apex_vertical_jitter=0.04,
+            rng=random.Random(seed * 31 + 100),
+        ))
+
+        # 2. Sub-summits at h=0.78-0.88 of main, placed 0.45-0.65 of
+        # base_r away — close enough to share the base block.
+        for i in range(n_subs):
+            ang = rng.uniform(0, 2 * math.pi)
+            mag = rng.uniform(0.45, 0.65) * base_r
+            sub_cx = cx + mag * math.cos(ang)
+            sub_cy = cy + mag * math.sin(ang)
+            sub_h = h * rng.uniform(0.78, 0.88)
+            sub_r = base_r * rng.uniform(0.45, 0.65)
+            components.append(_faceted_peak_sdf(
+                sub_cx, sub_cy, sub_h, sub_r,
+                n_facets=rng.randint(6, 8),
+                tilt_min=58.0, tilt_max=72.0,
+                apex_lateral_jitter=0.10,
+                apex_vertical_jitter=0.05,
+                rng=random.Random(seed * 31 + 200 + i),
+            ))
+
+        # 3. Spires/shoulders at h=0.45-0.65 — tall narrow rocky
+        # outcrops on the upper slopes. Use FACETED half-plane spikes
+        # (no ridged noise) — research recipe warns that noise on cones
+        # produces jitter that fights planar decimate, collapsing into
+        # vertical fluting on the cliff faces.
+        for i in range(n_spikes):
+            ang = rng.uniform(0, 2 * math.pi)
+            mag = rng.uniform(0.30, 0.55) * base_r
+            spike_cx = cx + mag * math.cos(ang)
+            spike_cy = cy + mag * math.sin(ang)
+            spike_h = h * rng.uniform(0.45, 0.65)
+            spike_r = base_r * rng.uniform(0.08, 0.16)
+            components.append(_faceted_peak_sdf(
+                spike_cx, spike_cy, spike_h, spike_r,
+                n_facets=rng.randint(5, 7),
+                tilt_min=68.0, tilt_max=82.0,
+                apex_lateral_jitter=0.05,
+                apex_vertical_jitter=0.04,
+                rng=random.Random(seed * 31 + 300 + i),
+            ))
+
+        # 4. Walkable ledge plateaus — small flat-topped disks at
+        # intermediate heights on the side of the main cone.
+        for i in range(n_ledges):
+            ang = rng.uniform(0, 2 * math.pi)
+            mag = rng.uniform(0.60, 0.85) * base_r
+            ledge_cx = cx + mag * math.cos(ang)
+            ledge_cy = cy + mag * math.sin(ang)
+            ledge_top = h * rng.uniform(0.30, 0.55)
+            ledge_r = base_r * rng.uniform(0.14, 0.22)
+            components.append(_ledge_disk_sdf(
+                ledge_cx, ledge_cy, ledge_top, ledge_r, rim_band=1.5,
+            ))
+
+        # Smooth-union with SMALL k — research warns smin destroys the
+        # sharp ridges between facets. Keep blend tight.
+        peak_blend = max(blend * 0.4, 0.8)
+        peak_sdf = sdf_lib.smooth_union(peak_blend, *components)
+
+        h_total = float(h)
+        base_r_f = float(base_r)
+        cx_f = float(cx)
+        cy_f = float(cy)
+        taper_f = float(taper)
 
         def make_h(prev_h: HeightFn) -> HeightFn:
-            def h_with_peak(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            def h_with_peak(x, y):
                 base_h = prev_h(x, y)
-                r = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-                cone_h = np.maximum(0.0, h * (1.0 - r / base_r))
+                dx = x - cx_f
+                dy = y - cy_f
+                r = np.sqrt(dx * dx + dy * dy + 1e-8)
+                ratio = np.clip((base_r_f - r) / max(base_r_f * taper_f, 0.001), 0.0, 1.0)
+                cone_h = h_total * ratio
                 return np.maximum(base_h, base_h + cone_h)
             return h_with_peak
 
         return [FeatureSpec(
             sdf=peak_sdf, op="smooth_union", blend=blend,
             height_modifier=make_h,
-            keep_out_zones=[(cx, cy, base_r * 0.7)],
+            keep_out_zones=[(cx_f, cy_f, base_r_f * 0.6)],
+        )]
+
+
+@dataclass
+class Trail:
+    """A subtly carved hiking trail through flat-ish terrain — meandering
+    polyline with a smoothstep-falloff depression that LOWERS the height
+    field in a corridor, instead of subtracting a 3D mass like `Gorge`.
+
+    Use Trail for: paths on flat or gently rolling ground (alpine apron,
+    desert floor, meadow). Use Gorge for: deep canyons in tall plateau
+    bases where you want hard cliff walls.
+
+    The carver is implemented as a height_modifier (`h(x,y) -= depth(s) *
+    falloff(d/width)`) per the standard procedural-trail recipe (Inigo
+    Quilez sdSegment + smoothstep falloff). Path is auto-generated as a
+    Catmull-Rom-ish chain of fbm-perturbed waypoints; depth tapers to
+    zero at both endpoints so the trail "fades in/out" at the corridor
+    edges.
+
+    Researched 2026-04-29 (subagent + IQ articles + Sebastian Lague).
+    """
+
+    depth: ScalarOrRange = (1.5, 3.0)
+    half_width: ScalarOrRange = (3.0, 6.0)
+    n_waypoints: IntOrRange = (8, 12)
+    lateral_jitter: ScalarOrRange = (8.0, 14.0)
+    axis: str = "x"
+    end_taper_frac: float = 0.15  # outer 15% on each end fades to zero depth
+    # Top of the carver volume in world Z. Should sit just above local
+    # ground so we slice the apron without punching into nearby peaks.
+    # 5m default works for AlpineBase (ground 0-2m). Bump higher if the
+    # base has tall ground variation.
+    trail_top: float = 5.0
+    keep_out_margin: ScalarOrRange = (1.0, 2.5)
+    blend: ScalarOrRange = (1.0, 2.0)
+
+    def to_specs(self, extent, seed, **kwargs) -> list[FeatureSpec]:
+        sx, sy = extent
+        rng = random.Random(seed * 1000 + 23)
+        depth = float(_sample(self.depth, rng))
+        half_w = float(_sample(self.half_width, rng))
+        n_pts = int(max(2, _sample(self.n_waypoints, rng)))
+        jitter = float(_sample(self.lateral_jitter, rng))
+        keep_out_margin = float(_sample(self.keep_out_margin, rng))
+        blend = float(_sample(self.blend, rng))
+        end_taper = float(self.end_taper_frac)
+        prev_height_fn = kwargs.get("prev_height_fn", None)
+        existing_keep_outs = kwargs.get("existing_keep_outs", []) or []
+
+        # Auto-generate waypoints along the corridor axis with lateral
+        # noise. After generating, push any waypoint that lands inside
+        # an existing keep-out (e.g. a peak's footprint) radially OUT
+        # of that zone — so the trail routes around hills instead of
+        # tunneling through them.
+        waypoints: list[tuple[float, float]] = []
+        for i in range(n_pts):
+            t = i / (n_pts - 1)
+            if self.axis == "y":
+                main = (t - 0.5) * sy * 0.95
+                cross = rng.uniform(-jitter, jitter)
+                waypoints.append((cross, main))
+            elif self.axis == "x":
+                main = (t - 0.5) * sx * 0.95
+                cross = rng.uniform(-jitter, jitter)
+                waypoints.append((main, cross))
+            else:
+                raise ValueError(f"Trail.axis must be y|x, got {self.axis!r}")
+
+        if existing_keep_outs:
+            avoid_pad = 1.5  # extra clearance beyond the keep-out radius
+            for _it in range(4):  # iterate to handle multi-zone overlaps
+                changed = False
+                for i, (wx, wy) in enumerate(waypoints):
+                    for cx, cy, r in existing_keep_outs:
+                        dx = wx - cx; dy = wy - cy
+                        d = (dx * dx + dy * dy) ** 0.5
+                        target_r = r + avoid_pad
+                        if d < target_r and d > 1e-3:
+                            push = (target_r - d) / d
+                            wx = wx + dx * push
+                            wy = wy + dy * push
+                            changed = True
+                        elif d < target_r:
+                            # waypoint exactly at center — push perpendicular
+                            wx = cx + target_r
+                            wy = cy
+                            changed = True
+                    waypoints[i] = (wx, wy)
+                if not changed:
+                    break
+
+        # Trail SDF — when `prev_height_fn` is supplied (factory passes
+        # it), the carver is GROUND-FOLLOWING: surface lowered by
+        # `trail_offset(x,y)` relative to whatever the terrain height was
+        # at that XY. The hills RISE OUT of the trail instead of being
+        # sliced (per user direction 2026-04-29 — "the hills should rise
+        # out of the trails, cause now it looks like a gorge").
+        # When prev_height_fn is None, falls back to the legacy fixed-
+        # vertical-range cylinder carve (keeps Gorge-style behavior for
+        # callers that don't have access to a terrain height).
+
+        # height_modifier mirrors the SDF carve for asset-placement
+        # queries (so anything spawned in the corridor sits on the
+        # lowered floor, not on the original ground).
+        pts = np.asarray(waypoints, dtype=np.float32)
+        seg_starts = pts[:-1]
+        seg_ends = pts[1:]
+        seg_vecs = seg_ends - seg_starts
+        seg_lens = np.sqrt((seg_vecs * seg_vecs).sum(axis=-1))
+        seg_lens_safe = np.maximum(seg_lens, 1e-6)
+        cum_starts = np.concatenate([[0.0], np.cumsum(seg_lens[:-1])])
+        total_len = float(seg_lens.sum())
+        depth_f = np.float32(depth)
+        half_w_f = np.float32(half_w)
+
+        def _trail_offset(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            x32 = np.asarray(x, dtype=np.float32)
+            y32 = np.asarray(y, dtype=np.float32)
+            shape = x32.shape
+            flat_x = x32.ravel()
+            flat_y = y32.ravel()
+            n = flat_x.size
+            P = np.stack([flat_x, flat_y], axis=-1).astype(np.float32)
+            S = seg_starts.astype(np.float32)[None, :, :]
+            V = seg_vecs.astype(np.float32)[None, :, :]
+            L2 = (seg_lens_safe.astype(np.float32) ** 2)[None, :]
+            PS = P[:, None, :] - S
+            t_proj = np.clip((PS * V).sum(axis=-1) / L2, 0.0, 1.0)
+            closest = S + V * t_proj[..., None]
+            diff = P[:, None, :] - closest
+            d2 = (diff * diff).sum(axis=-1)
+            seg_idx = np.argmin(d2, axis=1)
+            d_min = np.sqrt(d2[np.arange(n), seg_idx]).astype(np.float32)
+            t_at_seg = t_proj[np.arange(n), seg_idx]
+            arc = (cum_starts[seg_idx] + t_at_seg * seg_lens[seg_idx]) / max(total_len, 1e-6)
+            arc = arc.astype(np.float32).reshape(shape)
+            d_min = d_min.reshape(shape)
+            # Flat-top profile: full depth in the inner zone, smoothstep
+            # only in the outer rim. Inner zone = 65% of half_width, outer
+            # rim = 35%. Result: a flat-floored path with small shoulder
+            # transitions on each side, NOT a V-shaped river channel.
+            inner_frac = 0.65
+            inner_w = half_w_f * inner_frac
+            rim_w = max(half_w_f - inner_w, 0.1)
+            # 1 inside inner zone, smoothstep down through the rim, 0 beyond
+            t_w = np.clip((half_w_f - d_min) / rim_w, 0.0, 1.0).astype(np.float32)
+            inside_inner = (d_min <= inner_w)
+            t_w_smooth = (t_w * t_w * (3.0 - 2.0 * t_w)).astype(np.float32)
+            falloff_w = np.where(inside_inner, np.float32(1.0), t_w_smooth).astype(np.float32)
+            ttp = np.clip(arc / max(end_taper, 1e-3), 0.0, 1.0).astype(np.float32)
+            ttp_in = (ttp * ttp * (3.0 - 2.0 * ttp))
+            tte = np.clip((1.0 - arc) / max(end_taper, 1e-3), 0.0, 1.0).astype(np.float32)
+            tte_out = (tte * tte * (3.0 - 2.0 * tte))
+            falloff_arc = (ttp_in * tte_out).astype(np.float32)
+            return depth_f * falloff_w * falloff_arc
+
+        def make_h(prev_h: HeightFn) -> HeightFn:
+            def h_with_trail(x, y):
+                return prev_h(x, y) - _trail_offset(x, y)
+            return h_with_trail
+
+        # Stash the resolved polyline + width so callers can bake a
+        # trail-proximity vertex attribute on the final mesh (used to
+        # color the entire path width as gravel, not just the floor).
+        self._last_polyline = list(waypoints)
+        self._last_half_width = float(half_w)
+        self._last_inner_frac = 0.65
+
+        if prev_height_fn is not None:
+            # Ground-following: trail SDF is `z - (h_base - offset)`.
+            # Combined with prev terrain SDF via `smooth_intersect` (max),
+            # the iso-surface lands at the LOWER of (original, lowered)
+            # — so outside the corridor offset=0 → no change, inside
+            # corridor surface lowered by offset.
+            prev_h_local = prev_height_fn
+
+            def trail_sdf(p):
+                x = p[..., 0]; y = p[..., 1]; z = p[..., 2]
+                base_h = prev_h_local(x, y)
+                offset = _trail_offset(x, y)
+                return (z - (base_h - offset)).astype(np.float32)
+
+            keep_outs = [(float(x), float(y), half_w + keep_out_margin) for x, y in waypoints]
+            return [FeatureSpec(
+                sdf=trail_sdf, op="smooth_intersect", blend=blend,
+                height_modifier=make_h,
+                keep_out_zones=keep_outs,
+            )]
+
+        # Legacy fixed-z fallback (kept for callers without prev_height_fn)
+        trail_floor = -depth
+        trail_top = float(getattr(self, "trail_top", 5.0))
+        z_center = (trail_floor + trail_top) / 2.0
+        z_extent_carver = (trail_top - trail_floor) / 2.0 + 0.5
+        carver = sdf_lib.line_xy(
+            waypoints, radius=half_w,
+            z=z_center, z_extent=z_extent_carver,
+        )
+        keep_outs = [(float(x), float(y), half_w + keep_out_margin) for x, y in waypoints]
+        return [FeatureSpec(
+            sdf=carver, op="smooth_subtract", blend=blend,
+            height_modifier=make_h,
+            keep_out_zones=keep_outs,
+        )]
+
+
+# ---------------------------------------------------------------------------
+# Lobed-terraced peak — user-validated 2026-04-29 as the "best" alpine peak
+# silhouette. Heightfield approach (NOT SDF half-plane intersection):
+#   - radial profile = 1 - r_norm^exp (concave: gentle base, steep apex)
+#   - lobe-union: max over N off-center lobes for multi-summit massif
+#   - terrace lower zone via sigmoid quantisation → walkable benches
+#   - apex truncation cap → broken summit (peaks don't fully peak)
+# Replaces the v17 _faceted_peak_sdf for production use.
+# ---------------------------------------------------------------------------
+def _terrace_quantize(z_norm: np.ndarray, n_steps: int, sharpness: float = 10.0) -> np.ndarray:
+    """Snap z_norm in [0,1] to stepped levels via per-bin sigmoid — produces
+    flat shelves at each 1/n_steps interval. Higher sharpness = crisper
+    bench edges. Used for walkable-bench lower zone."""
+    z = np.asarray(z_norm, dtype=np.float32)
+    step = 1.0 / max(n_steps, 1)
+    b = z / step
+    bf = np.floor(b)
+    frac = b - bf
+    sm = 1.0 / (1.0 + np.exp(-sharpness * (frac - 0.5)))
+    return ((bf + sm) * step).astype(np.float32)
+
+
+@dataclass
+class TerracedPeak:
+    """Single-point alpine peak built as the max-union of N lobes around a
+    nominal centre, with each lobe's lower zone terraced into walkable
+    benches and the apex truncated for a broken-summit silhouette.
+
+    User-validated 2026-04-29 as the production approach for alpine peaks.
+    Heightfield SDF (`p.z - h(x,y)`); marching cubes + planar decimate
+    preserves the bench shelves cleanly.
+
+    Knobs (all randomization-friendly):
+      n_lobes              — 2-4 typical; biggest silhouette driver
+      lobe_spread          — (lo, hi) of offset_magnitude / base_radius
+      main_h_frac          — main lobe height as frac of `height`
+      secondary_h_frac     — range for non-main lobe heights
+      secondary_r_frac     — range for non-main lobe radii / base_radius
+      benches_per_lobe     — 2-4 typical
+      bench_zone           — z-norm threshold below which terracing applies
+      bench_sharpness      — soft step (~6) vs crisp shelf (~14)
+      apex_cap             — global height cap as frac of `height`
+                              (0.78-0.85 typical) — controls how truncated
+                              the summit is
+      surface_noise_amp    — small global fBm overlay magnitude
+      radial_exp           — concavity of the radial profile
+                              (>2 pointier; <2 flatter top)
+    """
+
+    center: tuple[float, float] = (0.0, 0.0)
+    height: ScalarOrRange = (40.0, 60.0)
+    base_radius: ScalarOrRange = (24.0, 32.0)
+    n_lobes: IntOrRange = (2, 4)
+    lobe_spread: tuple[float, float] = (0.40, 0.65)
+    main_h_frac: ScalarOrRange = (0.72, 0.82)
+    secondary_h_frac: tuple[float, float] = (0.42, 0.62)
+    secondary_r_frac: tuple[float, float] = (0.40, 0.55)
+    benches_per_lobe: IntOrRange = (3, 4)
+    bench_zone: ScalarOrRange = (0.55, 0.62)
+    bench_sharpness: ScalarOrRange = (8.0, 12.0)
+    apex_cap: ScalarOrRange = (0.78, 0.85)
+    surface_noise_amp: ScalarOrRange = (0.04, 0.07)
+    radial_exp: ScalarOrRange = (1.9, 2.2)
+    blend: ScalarOrRange = (1.0, 2.0)
+
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
+        cx_, cy_ = float(self.center[0]), float(self.center[1])
+        # Mix center coordinates into the per-instance RNG so multiple
+        # TerracedPeaks placed at different positions in one scene get
+        # distinct lobe counts / placements / heights — otherwise they'd
+        # all share factory_seed and look identical.
+        per_inst_seed = (seed * 1000 + 17 + int(cx_ * 131.0) + int(cy_ * 977.0)) % (2 ** 31)
+        rng = random.Random(per_inst_seed)
+        h_total = float(_sample(self.height, rng))
+        base_r = float(_sample(self.base_radius, rng))
+        n_lobes = int(_sample(self.n_lobes, rng))
+        main_h = float(_sample(self.main_h_frac, rng))
+        benches = int(_sample(self.benches_per_lobe, rng))
+        bench_zone = float(_sample(self.bench_zone, rng))
+        bench_sharpness = float(_sample(self.bench_sharpness, rng))
+        apex_cap = float(_sample(self.apex_cap, rng))
+        surface_amp = float(_sample(self.surface_noise_amp, rng))
+        radial_exp = float(_sample(self.radial_exp, rng))
+        blend = float(_sample(self.blend, rng))
+
+        # Sample lobes deterministically for this seed
+        main_offset = rng.uniform(0.0, 3.0)
+        main_ang = rng.uniform(0.0, 2.0 * math.pi)
+        lobes: list[tuple[float, float, float, float]] = [(
+            cx_ + main_offset * math.cos(main_ang),
+            cy_ + main_offset * math.sin(main_ang),
+            base_r * 0.70,
+            h_total * main_h,
+        )]
+        for _ in range(max(n_lobes - 1, 0)):
+            ang = rng.uniform(0, 2 * math.pi)
+            mag = rng.uniform(*self.lobe_spread) * base_r
+            lobes.append((
+                cx_ + mag * math.cos(ang),
+                cy_ + mag * math.sin(ang),
+                base_r * rng.uniform(*self.secondary_r_frac),
+                h_total * rng.uniform(*self.secondary_h_frac),
+            ))
+
+        noise = sdf_lib.low_freq_noise_2d(
+            seed=per_inst_seed * 31 + 17,
+            feature_scale=base_r * 1.5,
+            amplitude=1.0,
+            grid_size=8,
+        )
+
+        def height_fn(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            x32 = np.asarray(x, dtype=np.float32)
+            y32 = np.asarray(y, dtype=np.float32)
+            z_total = np.zeros_like(x32)
+            for lcx, lcy, lr, lh in lobes:
+                dx = x32 - np.float32(lcx)
+                dy = y32 - np.float32(lcy)
+                d = np.sqrt(dx * dx + dy * dy + 1e-6)
+                r_norm = np.clip(d / np.float32(lr), 0.0, 1.0)
+                radial = 1.0 - np.power(r_norm, np.float32(radial_exp))
+                radial = np.clip(radial, 0.0, 1.0).astype(np.float32)
+                rt = np.where(
+                    radial < bench_zone,
+                    _terrace_quantize(radial / bench_zone, benches,
+                                      sharpness=bench_sharpness) * bench_zone,
+                    radial,
+                ).astype(np.float32)
+                z_total = np.maximum(z_total, np.float32(lh) * rt)
+            # Surface noise — masked by total height so it dies outside footprint
+            n = noise(x32, y32)
+            footprint_mask = (z_total > 0).astype(np.float32)
+            z_total = z_total + np.float32(surface_amp * h_total) * n * footprint_mask
+            z_total = np.minimum(z_total, np.float32(h_total * apex_cap))
+            # Outside any lobe (z_total still 0) return a large negative so
+            # the height_field SDF says "no surface" there. Otherwise
+            # the peak emits a flat z=0 sheet covering the whole extent
+            # when used over EmptyBase / OceanBase.
+            outside = z_total <= 0
+            return np.where(outside, np.float32(-1e6), z_total).astype(np.float32)
+
+        peak_sdf = sdf_lib.height_field(height_fn)
+
+        def make_h(prev_h: HeightFn) -> HeightFn:
+            def h_with_peak(x, y):
+                return np.maximum(prev_h(x, y), height_fn(x, y))
+            return h_with_peak
+
+        return [FeatureSpec(
+            sdf=peak_sdf, op="smooth_union", blend=blend,
+            height_modifier=make_h,
+            keep_out_zones=[(cx_, cy_, base_r * 0.6)],
+        )]
+
+
+# ---------------------------------------------------------------------------
+# Mountain ridge — peak built around a polyline rather than a single apex.
+# Uses distance-to-polyline as the radial parameter; height-along-arc
+# samples summit positions along the line for natural multi-summit chains
+# (Aiguilles-de-Chamonix / Cuillin Ridge / Mont Blanc style).
+# ---------------------------------------------------------------------------
+@dataclass
+class MountainRidge:
+    """An alpine ridgeline — multi-summit chain built around a polyline.
+
+    Same lobed-terraced apparatus as `TerracedPeak`, but the radial
+    parameter is distance-to-polyline instead of distance-to-apex, and
+    summit heights are sampled along the line's arc-length so the ridge
+    has natural undulating crest with multiple summits separated by
+    saddles. Use for: linear cliff walls flanking a pass, long
+    chains of jagged peaks, T-shape spurs.
+
+    polyline       — list of (x, y) waypoints in world coords (≥ 2)
+    arc_summits    — list of (t ∈ [0, 1], height_frac) — summit count
+                      and distribution along the ridge. height_frac is
+                      relative to `height`. Saddles fall between samples.
+    ridge_radius   — perpendicular extent (one side) — typical 15-25m
+    benches/bench_zone/bench_sharpness/apex_cap/surface_noise_amp/radial_exp
+                     — same semantics as TerracedPeak
+    """
+
+    polyline: list[tuple[float, float]] = field(default_factory=lambda: [(-30.0, 0.0), (30.0, 0.0)])
+    arc_summits: list[tuple[float, float]] = field(default_factory=lambda: [(0.20, 0.95), (0.55, 0.78), (0.85, 0.85)])
+    ridge_radius: ScalarOrRange = (16.0, 22.0)
+    height: ScalarOrRange = (40.0, 60.0)
+    benches: IntOrRange = (3, 4)
+    bench_zone: ScalarOrRange = (0.50, 0.60)
+    bench_sharpness: ScalarOrRange = (8.0, 12.0)
+    apex_cap: ScalarOrRange = (0.80, 0.90)
+    surface_noise_amp: ScalarOrRange = (0.04, 0.07)
+    radial_exp: ScalarOrRange = (1.9, 2.3)
+    blend: ScalarOrRange = (1.0, 2.0)
+
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
+        # Mix polyline centroid into the per-instance seed so multiple
+        # MountainRidges in one scene get distinct samplings.
+        pts_for_seed = np.asarray(self.polyline, dtype=np.float32)
+        seed_cx = float(pts_for_seed[:, 0].mean())
+        seed_cy = float(pts_for_seed[:, 1].mean())
+        per_inst_seed = (seed * 1000 + 19 + int(seed_cx * 131.0) + int(seed_cy * 977.0)) % (2 ** 31)
+        rng = random.Random(per_inst_seed)
+        h_total = float(_sample(self.height, rng))
+        ridge_r = float(_sample(self.ridge_radius, rng))
+        benches = int(_sample(self.benches, rng))
+        bench_zone = float(_sample(self.bench_zone, rng))
+        bench_sharpness = float(_sample(self.bench_sharpness, rng))
+        apex_cap = float(_sample(self.apex_cap, rng))
+        surface_amp = float(_sample(self.surface_noise_amp, rng))
+        radial_exp = float(_sample(self.radial_exp, rng))
+        blend = float(_sample(self.blend, rng))
+
+        pts = np.asarray(self.polyline, dtype=np.float32)
+        if pts.shape[0] < 2:
+            raise ValueError("MountainRidge needs at least 2 polyline waypoints")
+        seg_starts = pts[:-1]
+        seg_ends = pts[1:]
+        seg_vecs = seg_ends - seg_starts
+        seg_lens = np.sqrt((seg_vecs * seg_vecs).sum(axis=-1))
+        seg_lens_safe = np.maximum(seg_lens, 1e-6)
+        cum_starts = np.concatenate([[0.0], np.cumsum(seg_lens[:-1])])
+        total_len = float(seg_lens.sum())
+
+        # arc-summit gaussian profile
+        summit_t = np.asarray([s[0] for s in self.arc_summits], dtype=np.float32)
+        summit_h = np.asarray([s[1] for s in self.arc_summits], dtype=np.float32)
+        bandwidths = np.zeros_like(summit_t)
+        for i in range(len(summit_t)):
+            d = np.abs(summit_t - summit_t[i]).copy()
+            d[i] = 1.0
+            bandwidths[i] = max(float(d.min()) * 0.55, 0.05)
+
+        cx_centroid = float(pts[:, 0].mean())
+        cy_centroid = float(pts[:, 1].mean())
+        max_extent = float(max(
+            pts[:, 0].max() - pts[:, 0].min(),
+            pts[:, 1].max() - pts[:, 1].min(),
+        ))
+        keep_out_r = max(max_extent * 0.5, ridge_r * 0.6)
+
+        noise = sdf_lib.low_freq_noise_2d(
+            seed=per_inst_seed * 31 + 19,
+            feature_scale=ridge_r * 2.0,
+            amplitude=1.0,
+            grid_size=8,
+        )
+
+        def _polyline_dist_t(x: np.ndarray, y: np.ndarray):
+            x32 = np.asarray(x, dtype=np.float32); y32 = np.asarray(y, dtype=np.float32)
+            shape = x32.shape
+            flat_x = x32.ravel(); flat_y = y32.ravel()
+            n_pts = flat_x.size
+            P = np.stack([flat_x, flat_y], axis=-1).astype(np.float32)
+            S = seg_starts.astype(np.float32)[None, :, :]
+            V = seg_vecs.astype(np.float32)[None, :, :]
+            L2 = (seg_lens_safe.astype(np.float32) ** 2)[None, :]
+            PS = P[:, None, :] - S
+            t_proj = np.clip((PS * V).sum(axis=-1) / L2, 0.0, 1.0)
+            closest = S + V * t_proj[..., None]
+            diff = P[:, None, :] - closest
+            d2 = (diff * diff).sum(axis=-1)
+            seg_idx = np.argmin(d2, axis=1)
+            d_min = np.sqrt(d2[np.arange(n_pts), seg_idx]).astype(np.float32)
+            t_at_seg = t_proj[np.arange(n_pts), seg_idx]
+            arc = (cum_starts[seg_idx] + t_at_seg * seg_lens[seg_idx]) / max(total_len, 1e-6)
+            return d_min.reshape(shape), arc.astype(np.float32).reshape(shape)
+
+        def _arc_height(t: np.ndarray) -> np.ndarray:
+            t32 = np.asarray(t, dtype=np.float32)
+            out = np.zeros_like(t32)
+            for ti, hi, bi in zip(summit_t, summit_h, bandwidths):
+                d = (t32 - ti) / bi
+                out = np.maximum(out, hi * np.exp(-d * d).astype(np.float32))
+            return out
+
+        def height_fn(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            d, t = _polyline_dist_t(x, y)
+            d_norm = np.clip(d / np.float32(ridge_r), 0.0, 1.0).astype(np.float32)
+            radial = 1.0 - np.power(d_norm, np.float32(radial_exp))
+            radial = np.clip(radial, 0.0, 1.0).astype(np.float32)
+            rt = np.where(
+                radial < bench_zone,
+                _terrace_quantize(radial / bench_zone, benches,
+                                  sharpness=bench_sharpness) * bench_zone,
+                radial,
+            ).astype(np.float32)
+            h_t = _arc_height(t)
+            z = np.float32(h_total) * h_t * rt
+            n = noise(np.asarray(x, dtype=np.float32), np.asarray(y, dtype=np.float32))
+            z = z + np.float32(surface_amp * h_total) * n * radial
+            z = np.minimum(z, np.float32(h_total * apex_cap))
+            # Outside the ridge footprint (d > ridge_r) return a large
+            # negative so the height_field SDF (`z - h`) is always positive
+            # there — i.e. "no surface" outside the ridge. Otherwise
+            # MountainRidge produces a flat z=0 sheet covering the whole
+            # extent, which shows up as a giant sea-floor rectangle when
+            # paired with EmptyBase / OceanBase.
+            outside = d > ridge_r
+            return np.where(outside, np.float32(-1e6), z).astype(np.float32)
+
+        ridge_sdf = sdf_lib.height_field(height_fn)
+
+        def make_h(prev_h: HeightFn) -> HeightFn:
+            def h_with_ridge(x, y):
+                return np.maximum(prev_h(x, y), height_fn(x, y))
+            return h_with_ridge
+
+        return [FeatureSpec(
+            sdf=ridge_sdf, op="smooth_union", blend=blend,
+            height_modifier=make_h,
+            keep_out_zones=[(cx_centroid, cy_centroid, keep_out_r)],
         )]
 
 

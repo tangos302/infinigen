@@ -136,21 +136,45 @@ class OceanBase(TerrainBase):
 
 @dataclass
 class RollingHillsBase(TerrainBase):
-    """Broad smooth hills — for grassland, valleys, gentle countryside."""
+    """Broad smooth hills — for grassland, valleys, gentle countryside.
+
+    Uses `low_freq_noise_2d` (NOT `perlin_2d`) — perlin_2d's fixed 64×64
+    grid produces dense spike artifacts at high amplitudes (spiky
+    cauliflower instead of rolling hills). low_freq_noise_2d ties cell
+    spacing to feature_scale/grid_size for genuine low-frequency relief.
+
+    Two summed bands give base hill mass + secondary undulation. Bumped
+    floor_offset keeps the surface above z=0 to avoid "valley below water"
+    artifacts when paired with snow/grass shaders.
+    """
 
     max_height: float = 4.0
-    noise_period: float = 35.0
-    noise_octaves: int = 2
-    noise_persistence: float = 0.5
+    feature_scale_primary: float = 60.0
+    feature_scale_secondary: float = 30.0
+    secondary_amplitude_frac: float = 0.30
+    floor_offset: float = 0.3
+    primary_grid_size: int = 8
+    secondary_grid_size: int = 10
 
     def to_spec(self, extent, seed):
-        noise = sdf_lib.perlin_2d(
-            seed=seed, period=self.noise_period, amplitude=self.max_height,
-            octaves=self.noise_octaves, persistence=self.noise_persistence,
+        primary = sdf_lib.low_freq_noise_2d(
+            seed=seed, feature_scale=self.feature_scale_primary,
+            amplitude=self.max_height,
+            grid_size=self.primary_grid_size,
         )
+        secondary = sdf_lib.low_freq_noise_2d(
+            seed=seed * 7 + 3, feature_scale=self.feature_scale_secondary,
+            amplitude=self.max_height * self.secondary_amplitude_frac,
+            grid_size=self.secondary_grid_size,
+        )
+        amp_sum = self.max_height * (1.0 + self.secondary_amplitude_frac)
+        offset = float(self.floor_offset) + float(amp_sum)
+
+        def height_fn(x, y):
+            return primary(x, y) + secondary(x, y) + np.float32(offset)
         return BaseSpec(
-            sdf=sdf_lib.height_field(noise),
-            height_fn=noise,
+            sdf=sdf_lib.height_field(height_fn),
+            height_fn=height_fn,
         )
 
 
@@ -300,26 +324,53 @@ class MesaPlateauBase(TerrainBase):
 
 @dataclass
 class AlpineBase(TerrainBase):
-    """Tall jagged mountain terrain — alpine, fjord, rocky.
+    """Tall mountain-mass terrain — alpine, fjord, rocky.
 
-    Sharper feel than RollingHillsBase: more octaves, higher amplitude,
-    shorter period. Combined with a `MountainPeak` feature for hero
-    summits.
+    Built from layered `low_freq_noise_2d` (NOT `perlin_2d`) — the
+    perlin_2d implementation always uses a 64×64 grid, so its cell
+    spacing matches the marching-cubes voxel grid and produces dense
+    spike artifacts on a noisy base. `low_freq_noise_2d` ties cell
+    spacing to feature_scale/grid_size for genuine low-frequency
+    relief.
+
+    Two summed bands give a base mountain mass + secondary ridge
+    noise. Combine with `MountainPeak` features for hero summits.
     """
 
-    max_height: float = 14.0
-    noise_period: float = 22.0
-    noise_octaves: int = 3
-    noise_persistence: float = 0.55
+    # Default to GENTLE walkable ground — small height delta, single
+    # long-wavelength noise band. Tune up only when the prompt
+    # explicitly calls for jagged alpine ridges. See feedback memory
+    # `feedback_default_to_less_noise`.
+    max_height: float = 2.0
+    feature_scale_primary: float = 80.0
+    feature_scale_secondary: float = 40.0
+    secondary_amplitude_frac: float = 0.0
+    # Lowest point of the base ground above z=0 — guarantees a
+    # continuous mountain mass with no "below water" gaps. The noise
+    # adds elevation variation on top of this floor.
+    floor_offset: float = 0.5
 
     def to_spec(self, extent, seed):
-        noise = sdf_lib.perlin_2d(
-            seed=seed, period=self.noise_period, amplitude=self.max_height,
-            octaves=self.noise_octaves, persistence=self.noise_persistence,
+        primary = sdf_lib.low_freq_noise_2d(
+            seed=seed, feature_scale=self.feature_scale_primary,
+            amplitude=self.max_height, grid_size=8,
         )
+        secondary = sdf_lib.low_freq_noise_2d(
+            seed=seed * 7 + 3, feature_scale=self.feature_scale_secondary,
+            amplitude=self.max_height * self.secondary_amplitude_frac,
+            grid_size=10,
+        )
+        # Both noises return signed values in [-amp, +amp]. Sum range:
+        # [-(1 + sec_frac) * max_height, +(1 + sec_frac) * max_height].
+        # Add an offset so the lowest point is at floor_offset above 0.
+        amp_sum = self.max_height * (1.0 + self.secondary_amplitude_frac)
+        offset = float(self.floor_offset) + float(amp_sum)
+
+        def height_fn(x, y):
+            return primary(x, y) + secondary(x, y) + np.float32(offset)
         return BaseSpec(
-            sdf=sdf_lib.height_field(noise),
-            height_fn=noise,
+            sdf=sdf_lib.height_field(height_fn),
+            height_fn=height_fn,
         )
 
 
