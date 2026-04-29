@@ -30,6 +30,7 @@ class GenerationResult:
     raw_response: str          # everything Claude returned
     extracted_script: str      # the Python script we'll run
     requested_assets: list[str]  # `# REQUESTED_ASSET: ...` lines
+    debug_narrative: str | None = None  # extracted ## DEBUG_NARRATIVE block
 
 
 _SYSTEM_PROMPT = """\
@@ -96,13 +97,74 @@ def _read_text(p: Path) -> str:
     return p.read_text() if p.exists() else ""
 
 
-def build_prompt(user_prompt: str, *, regenerate_guide: bool = True) -> str:
+_DEBUG_NARRATIVE_INSTRUCTIONS = """\
+
+## DEBUG MODE — narrate your reasoning
+
+This is a DEBUG run. Before the ```python build script block, output a
+section titled exactly:
+
+```
+## DEBUG_NARRATIVE
+```
+
+Inside that section, in plain English (markdown allowed), walk through
+your decisions step by step so a human reading the debug page can
+follow your thinking. Cover at minimum:
+
+1. **Understanding the prompt / image(s)** — what scene the user wants,
+   what mood/palette/silhouette you're picking up from any reference
+   images.
+2. **Scene plan** — which biome/terrain you chose, which factories you
+   plan to use, why those (vs alternatives).
+3. **Per-asset reasoning** — for each major asset class, why this
+   archetype, what palette slots, where it sits in the layout, and
+   roughly how many you'll spawn.
+4. **Missing factories** — for each `REQUESTED_ASSET`, what you wished
+   existed and what existing factory you used as a stand-in instead.
+5. **Lighting + camera choice** — which preset and why it fits the
+   prompt's mood.
+
+Keep each section short (2-5 sentences). After the narrative section
+ends, write the python build script in the usual fenced block. The
+narrative is for humans only — your build script must still stand on
+its own without referencing it.
+"""
+
+
+def build_prompt(
+    user_prompt: str,
+    *,
+    regenerate_guide: bool = True,
+    reference_image_paths: list[Path] | None = None,
+    debug: bool = False,
+) -> str:
     """Assemble the full prompt: system instructions + factory catalog +
-    canonical example + user prompt."""
+    canonical example + user prompt + optional reference image attachments.
+
+    Reference images are injected as ``@<absolute_path>`` lines so Claude
+    Code attaches them to the conversation; the model can then describe
+    palette, silhouettes, and composition cues from the image while writing
+    the build script."""
     if regenerate_guide:
         write_guide()
     guide = _read_text(MAQUETTE_DIR / "FACTORIES_GUIDE.md")
     example = _read_text(EXAMPLE_PATH)
+
+    image_block = ""
+    if reference_image_paths:
+        ref_lines = "\n".join(
+            f"@{Path(p).resolve()}" for p in reference_image_paths
+        )
+        image_block = (
+            "## Reference image(s)\n\n"
+            "Treat these as visual mood/composition references. Match their\n"
+            "palette, silhouette, density, and overall vibe — but the prompt\n"
+            "below is still the source of truth for content.\n\n"
+            f"{ref_lines}\n\n"
+        )
+
+    debug_block = _DEBUG_NARRATIVE_INSTRUCTIONS if debug else ""
 
     return (
         f"{_SYSTEM_PROMPT}\n\n"
@@ -112,8 +174,10 @@ def build_prompt(user_prompt: str, *, regenerate_guide: bool = True) -> str:
         f"on. Same structure (wipe → ground → spawns → camera → sun → world\n"
         f"→ render to $MAQUETTE_OUT_DIR), different content per prompt.\n\n"
         f"```python\n{example}\n```\n\n"
+        f"{image_block}"
+        f"{debug_block}"
         f"## YOUR TASK\n\n"
-        f"User prompt: {user_prompt}\n\n"
+        f"User prompt: {user_prompt.strip() or '(blank — let the reference image(s) drive the build)'}\n\n"
         f"Generate the build script."
     )
 
@@ -147,6 +211,21 @@ def extract_requested_assets(script: str) -> list[str]:
     return [m.group("rest").strip() for m in _REQUESTED_LINE.finditer(script)]
 
 
+def extract_debug_narrative(response: str) -> str | None:
+    """Extract the `## DEBUG_NARRATIVE` section from Claude's response.
+    Returns None if no such section exists. The section ends at the next
+    top-level heading or the start of the python fenced block."""
+    match = re.search(
+        r"^##\s*DEBUG_NARRATIVE\s*\n(?P<body>.*?)(?=^##\s|^```python|\Z)",
+        response,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not match:
+        return None
+    body = match.group("body").strip()
+    return body or None
+
+
 def call_claude(prompt: str, *, model: str | None = None,
                 timeout_seconds: int = 300) -> str:
     """Run `claude -p <prompt>` and return stdout. The prompt is passed via
@@ -176,14 +255,23 @@ def call_claude(prompt: str, *, model: str | None = None,
 
 def generate(user_prompt: str, *, model: str | None = None,
              timeout_seconds: int = 300,
-             regenerate_guide: bool = True) -> GenerationResult:
+             regenerate_guide: bool = True,
+             reference_image_paths: list[Path] | None = None,
+             debug: bool = False) -> GenerationResult:
     """End-to-end: prompt → Claude → extracted script."""
-    full_prompt = build_prompt(user_prompt, regenerate_guide=regenerate_guide)
+    full_prompt = build_prompt(
+        user_prompt,
+        regenerate_guide=regenerate_guide,
+        reference_image_paths=reference_image_paths,
+        debug=debug,
+    )
     response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
     script = extract_script(response)
     requested = extract_requested_assets(script)
+    narrative = extract_debug_narrative(response) if debug else None
     return GenerationResult(
         raw_response=response,
         extracted_script=script,
         requested_assets=requested,
+        debug_narrative=narrative,
     )

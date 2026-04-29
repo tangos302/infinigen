@@ -27,6 +27,50 @@ MAQUETTE_DIR = FORK_ROOT / "infinigen" / "maquette"
 FACTORIES_DIR = MAQUETTE_DIR / "factories"
 
 
+# High-level category for each factory module — used by the /debug/factories
+# page to group the catalog into something a designer can scan. Keys are
+# module stems (file names without .py); modules not listed default to
+# "objects" so a new factory shows up without needing edits here.
+FACTORY_CATEGORIES: dict[str, str] = {
+    # terrain — vegetation, rock features, things rooted in the ground
+    "tree": "terrain",
+    "palm_tree": "terrain",
+    "cactus": "terrain",
+    "rock_spire": "terrain",
+    "boulder": "terrain",
+    "tumbleweed": "terrain",
+    # water — anything water-bound
+    "water_surface": "water",
+    "boat": "water",
+    # objects — small props, scatter, ground furniture
+    "barrel": "objects",
+    "crate": "objects",
+    "fence": "objects",
+    "haystack": "objects",
+    "lantern_post": "objects",
+    "banner": "objects",
+    "stall": "objects",
+    "wagon": "objects",
+    "deck": "objects",
+    # landmark — large structures, focal points, civilisation
+    "building": "landmark",
+    "suspension_bridge": "landmark",
+    "cable_car": "landmark",
+    "torii": "landmark",
+    "well": "landmark",
+    "windmill": "landmark",
+    "tombstone": "landmark",
+}
+
+CATEGORY_ORDER: list[str] = ["terrain", "water", "landmark", "objects"]
+
+
+def category_for(module_stem: str) -> str:
+    """Return the high-level category for a factory module. Falls back to
+    'objects' for unmapped modules so new factories show up automatically."""
+    return FACTORY_CATEGORIES.get(module_stem, "objects")
+
+
 def _module_docstring(tree: ast.Module) -> str | None:
     """First-statement string literal at the module level."""
     return ast.get_docstring(tree)
@@ -368,6 +412,51 @@ def write_guide(out_path: Path | None = None) -> Path:
         out_path = MAQUETTE_DIR / "FACTORIES_GUIDE.md"
     out_path.write_text(build_guide())
     return out_path
+
+
+def _structured_entry_for(path: Path) -> dict | None:
+    """Return a dict describing a single factory module, or None if the
+    file isn't a factory. Used by the debug API to render the catalog as
+    structured data instead of free-form markdown."""
+    src = path.read_text()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    cls = _find_factory_class(tree)
+    if cls is None:
+        return None
+    class_name, class_doc = cls
+    mod_doc = _module_docstring(tree) or ""
+    archetype_tuples = _find_archetype_tuples(tree)
+    init_fn = _find_class_init(tree, class_name)
+    params = _format_init_params(init_fn) if init_fn is not None else []
+    rel_path = path.relative_to(FORK_ROOT)
+    return {
+        "module": path.stem,
+        "module_path": str(rel_path),
+        "class_name": class_name,
+        "category": category_for(path.stem),
+        "module_doc": mod_doc.strip(),
+        "class_doc": (class_doc or "").strip(),
+        "archetypes": [
+            {"label": name.strip("_").removesuffix("_ARCHETYPES").lower() or "archetype",
+             "values": values}
+            for name, values in archetype_tuples
+        ],
+        "constructor_params": params,
+        "default_knobs": _find_archetype_defaults_keys(tree),
+    }
+
+
+def list_factories() -> list[dict]:
+    """Return a structured list of every factory in the catalog."""
+    out: list[dict] = []
+    for path in _factory_files():
+        entry = _structured_entry_for(path)
+        if entry is not None:
+            out.append(entry)
+    return out
 
 
 if __name__ == "__main__":
