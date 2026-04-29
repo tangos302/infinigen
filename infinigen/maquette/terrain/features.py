@@ -515,35 +515,327 @@ class MesaCluster:
         )]
 
 
+def _build_island_sdf(
+    style: str,
+    cx: float,
+    cy: float,
+    radius: float,
+    height: float,
+    rng: random.Random,
+    *,
+    seed: int = 0,
+    warp_amplitude: float = 0.0,
+    warp_period: float = 35.0,
+):
+    """Build one island SDF in the chosen style. Center at (cx, cy, 0)
+    with the visible land emerging above z=0 (the waterline).
+
+    Styles:
+      "plateau" — flat-topped island, beach-slope rim. The default —
+                  reads as walkable land with sandy/grassy edges.
+      "dome"    — sphere-cap rounded hill (legacy; still callable).
+      "spit"    — flat low sandbar; very wide, low height, elongated.
+      "rocky"   — small mesa-ish flat-topped rock outcrop with cliff
+                  edges and a talus skirt. Reads as a stone islet.
+      "twin"    — two merged plateaus — peninsula / chain feel.
+      "ridge"   — long narrow plateau, strong n=1 anisotropy. Reads
+                  as a peninsula or volcanic crest.
+
+    `warp_amplitude` > 0 wraps the result with a domain-warp using two
+    seeded perlin noises so the silhouette gains low-frequency fractal
+    irregularity (fjord-carved coastline). 0 = no warp.
+    """
+    base_sdf: sdf_lib.SDF
+    if style == "spit":
+        # Flat low sandbar — strong n=1 (elongated axis), low height,
+        # gentle plateau (sandy beach grade).
+        horizontal = [
+            (1, rng.uniform(0.35, 0.55) * radius, rng.uniform(0, 2 * math.pi)),
+            (2, rng.uniform(0.08, 0.15) * radius, rng.uniform(0, 2 * math.pi)),
+        ]
+        base_sdf = sdf_lib.island_plateau(
+            radius=radius, height=height * 0.45,
+            center=(cx, cy, 0.0),
+            plateau_frac=0.55,
+            transition_softness=1.4,
+            horizontal_components=horizontal,
+        )
+    elif style == "rocky":
+        # Cliff-edged stone islet — sharp transition, talus skirt via
+        # weathered-cylinder primitive.
+        horizontal = [
+            (1, rng.uniform(0.12, 0.22) * radius, rng.uniform(0, 2 * math.pi)),
+            (2, rng.uniform(0.05, 0.10) * radius, rng.uniform(0, 2 * math.pi)),
+        ]
+        fluting = [
+            (rng.randint(6, 12), rng.randint(1, 2),
+             rng.uniform(0.02, 0.05) * radius,
+             rng.uniform(0, 2 * math.pi),
+             rng.uniform(0, 2 * math.pi))
+            for _ in range(2)
+        ]
+        h2 = max(height * 2, 1.0)
+        base_sdf = sdf_lib.cylinder_weathered(
+            radius=radius, height=h2, center=(cx, cy, height - h2 / 2),
+            horizontal_components=horizontal,
+            base_flare=rng.uniform(0.10, 0.18),
+            flare_height_frac=rng.uniform(0.30, 0.45),
+            fluting_components=fluting,
+            top_taper=rng.uniform(0.0, 0.05),
+            top_relief_components=[(
+                rng.randint(1, 2),
+                rng.uniform(0.05, 0.15),
+                rng.uniform(0, 2 * math.pi),
+            )],
+        )
+    elif style == "twin":
+        # Two overlapping plateaus — peninsula / dumbbell shape.
+        offset_theta = rng.uniform(0, 2 * math.pi)
+        offset_mag = rng.uniform(0.55, 0.85) * radius
+        ox = offset_mag * math.cos(offset_theta) * 0.5
+        oy = offset_mag * math.sin(offset_theta) * 0.5
+        h1 = rng.uniform(0.85, 1.0) * height
+        h_b = rng.uniform(0.7, 0.95) * height
+        r1 = rng.uniform(0.85, 1.0) * radius
+        r2 = rng.uniform(0.65, 0.85) * radius
+        d1 = sdf_lib.island_plateau(
+            radius=r1, height=h1, center=(cx + ox, cy + oy, 0.0),
+            plateau_frac=0.55, transition_softness=1.7,
+            horizontal_components=[
+                (1, rng.uniform(0.15, 0.28) * r1, rng.uniform(0, 2 * math.pi)),
+                (2, rng.uniform(0.06, 0.12) * r1, rng.uniform(0, 2 * math.pi)),
+            ],
+        )
+        d2 = sdf_lib.island_plateau(
+            radius=r2, height=h_b, center=(cx - ox, cy - oy, 0.0),
+            plateau_frac=0.55, transition_softness=1.7,
+            horizontal_components=[
+                (1, rng.uniform(0.15, 0.28) * r2, rng.uniform(0, 2 * math.pi)),
+                (2, rng.uniform(0.06, 0.12) * r2, rng.uniform(0, 2 * math.pi)),
+            ],
+        )
+        base_sdf = sdf_lib.smooth_union(rng.uniform(1.5, 3.0), d1, d2)
+    elif style == "ridge":
+        # Long narrow plateau — peninsula / island ridge. Built as a
+        # capsule-shaped plateau height-field with a drop-band past
+        # the rim (same construction as island_plateau, but distance
+        # is measured from a 1D spine segment instead of a point).
+        spine_theta = rng.uniform(0, 2 * math.pi)
+        length = radius * rng.uniform(1.5, 2.0)
+        width = radius * rng.uniform(0.40, 0.55)
+        ax = length * 0.5 * math.cos(spine_theta)
+        ay = length * 0.5 * math.sin(spine_theta)
+        h_eff = float(height)
+        plateau_w = width * rng.uniform(0.50, 0.65)
+        transition = max(width - plateau_w, 0.5)
+        drop_band = max(transition * 1.2, 1.5)
+        drop_depth = 80.0
+        ax_arr = np.array([cx - ax, cy - ay], dtype=np.float32)
+        bx_arr = np.array([cx + ax, cy + ay], dtype=np.float32)
+        ab = bx_arr - ax_arr
+        ab_len2 = float(np.dot(ab, ab)) + 1e-8
+        cz = 0.0
+
+        def ridge_sdf(p, ax_arr=ax_arr, ab=ab, ab_len2=ab_len2,
+                      width=float(width), transition=float(transition),
+                      drop_band=float(drop_band), drop_depth=drop_depth,
+                      h_eff=h_eff, cz=cz):
+            x = p[..., 0]
+            y = p[..., 1]
+            z = p[..., 2]
+            px = (x - ax_arr[0]).astype(np.float32)
+            py = (y - ax_arr[1]).astype(np.float32)
+            t = np.clip(
+                (px * ab[0] + py * ab[1]) / np.float32(ab_len2),
+                0.0, 1.0,
+            ).astype(np.float32)
+            qx = px - t * np.float32(ab[0])
+            qy = py - t * np.float32(ab[1])
+            d_xy = np.sqrt(qx * qx + qy * qy + 1e-8).astype(np.float32)
+            plateau_t = np.clip((width - d_xy) / max(transition, 0.5), 0.0, 1.0).astype(np.float32)
+            plateau_t = (plateau_t * plateau_t * (3.0 - 2.0 * plateau_t)).astype(np.float32)
+            drop_t = np.clip((d_xy - width) / np.float32(drop_band), 0.0, 1.0).astype(np.float32)
+            drop_t = (drop_t * drop_t * (3.0 - 2.0 * drop_t)).astype(np.float32)
+            surface_z = (cz + h_eff * plateau_t - drop_depth * drop_t).astype(np.float32)
+            return (z - surface_z).astype(np.float32)
+
+        base_sdf = ridge_sdf
+    elif style == "dome":
+        # Legacy sphere-cap dome (kept for variety / backwards compat).
+        horizontal = [
+            (1, rng.uniform(0.18, 0.32) * radius, rng.uniform(0, 2 * math.pi)),
+            (2, rng.uniform(0.06, 0.14) * radius, rng.uniform(0, 2 * math.pi)),
+        ]
+        shift_theta = rng.uniform(0, 2 * math.pi)
+        shift_mag = rng.uniform(0.0, 0.08) * radius
+        radial_shift = (
+            shift_mag * math.cos(shift_theta),
+            shift_mag * math.sin(shift_theta),
+        )
+        base_sdf = sdf_lib.island_dome(
+            radius=radius, height=height, center=(cx, cy, 0.0),
+            horizontal_components=horizontal,
+            radial_shift=radial_shift,
+        )
+    else:
+        # default = "plateau" — flat-topped potato island.
+        horizontal = [
+            (1, rng.uniform(0.18, 0.32) * radius, rng.uniform(0, 2 * math.pi)),
+            (2, rng.uniform(0.06, 0.14) * radius, rng.uniform(0, 2 * math.pi)),
+        ]
+        shift_theta = rng.uniform(0, 2 * math.pi)
+        shift_mag = rng.uniform(0.0, 0.06) * radius
+        radial_shift = (
+            shift_mag * math.cos(shift_theta),
+            shift_mag * math.sin(shift_theta),
+        )
+        base_sdf = sdf_lib.island_plateau(
+            radius=radius, height=height,
+            center=(cx, cy, 0.0),
+            # Wider beach-grade rim (transition 1.6-2.2x base) so
+            # marching cubes doesn't alias the steep drop into
+            # gear-tooth facets. Lower plateau_frac = bigger sloped
+            # band, more "real" looking shoreline.
+            plateau_frac=rng.uniform(0.45, 0.60),
+            transition_softness=rng.uniform(1.6, 2.2),
+            horizontal_components=horizontal,
+            radial_shift=radial_shift,
+        )
+
+    if warp_amplitude > 0.0:
+        # `perlin_2d` always uses a 64x64 grid regardless of period →
+        # cell spacing of ~period/64m, which is high-frequency content
+        # that aliases against the marching-cubes voxel grid and
+        # produces gear-tooth rim fringes. `low_freq_noise_2d` ties
+        # cell spacing directly to feature_scale/grid_size — at
+        # grid_size=8, period=80m gives 10m cells = genuine
+        # low-frequency noise = clean fjord coastlines.
+        nx = sdf_lib.low_freq_noise_2d(
+            seed=seed * 31 + 11, feature_scale=warp_period,
+            amplitude=1.0, grid_size=8,
+        )
+        ny = sdf_lib.low_freq_noise_2d(
+            seed=seed * 31 + 73, feature_scale=warp_period,
+            amplitude=1.0, grid_size=8,
+        )
+        return sdf_lib.warp_xy(
+            base_sdf, noise_x=nx, noise_y=ny, amplitude=warp_amplitude,
+        )
+    return base_sdf
+
+
+# Default mix favors plateaus + organic shapes. Adjust per-scene via
+# `style_weights` (e.g. all rocky for stone-stack archipelagos).
+_ISLAND_STYLE_DEFAULTS = {
+    "plateau": 4.0,
+    "rocky": 2.0,
+    "spit": 2.0,
+    "twin": 1.5,
+    "ridge": 1.5,
+}
+
+
 @dataclass
 class IslandCluster:
-    """N rounded dome-shaped islands rising out of an ocean base."""
+    """N varied-shape islands rising from the water.
 
-    n: IntOrRange = (5, 8)
-    height_range: tuple[float, float] = (1.5, 4.5)
-    radius_range: tuple[float, float] = (5.0, 10.0)
-    blend: ScalarOrRange = (1.2, 2.0)
-    spread_radius: ScalarOrRange = (25.0, 35.0)
-    keep_out_radius: float = 4.0
+    Islands spawn over the FULL terrain extent (rectangular sampling
+    with a small margin), not a sub-radius — pair with `EmptyBase`
+    and a translucent water box for the canonical archipelago scene.
+
+    Default style mix favours flat-topped plateau islands (most
+    natural / walkable) plus a sprinkle of cliff/rocky, low sandy
+    spits, twin peninsulas, and long ridges. Pass `style_weights` to
+    bias.
+
+    `warp_amplitude` (default 0.30 of mean radius) wraps each island
+    silhouette in a low-frequency domain warp (research item
+    `island_techniques` #2) so coastlines read as fractal/fjorded
+    rather than smooth ovals. Set to 0 to disable.
+
+    `edge_margin` is the inset from the extent boundary (so islands
+    don't get clipped by the extent walls when marching cubes runs).
+    """
+
+    n: IntOrRange = (3, 6)
+    # Bigger islands — at 80m extent these reach proper land-mass scale.
+    height_range: tuple[float, float] = (3.0, 6.0)
+    radius_range: tuple[float, float] = (16.0, 32.0)
+    blend: ScalarOrRange = (1.5, 2.5)
+    keep_out_radius: float = 6.0
+    edge_margin: float = 6.0
+    style_weights: dict[str, float] | None = None
+    # Domain-warp amplitude as a fraction of each island's radius, and
+    # period in meters. The combination matters: LOW frequency (period
+    # >> radius) + MODEST amplitude (15-25% of radius) produces a few
+    # big bays/headlands per island — fjord-carved coastline. High
+    # frequency at any amplitude produces "cookie crumb" rim noise.
+    warp_amplitude: ScalarOrRange = (0.15, 0.25)
+    warp_period: ScalarOrRange = (70.0, 100.0)
 
     def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 4)
         n_target = _sample(self.n, rng)
         blend = _sample(self.blend, rng)
-        spread = _sample(self.spread_radius, rng)
+        warp_amp_frac = _sample(self.warp_amplitude, rng)
+        warp_period = _sample(self.warp_period, rng)
+        weights = self.style_weights or _ISLAND_STYLE_DEFAULTS
+        style_names = list(weights.keys())
+        style_probs = list(weights.values())
+        sx, sy = extent
+
+        # Stratified-grid spawning with peripheral bias.
+        #
+        # Divide the extent into a grid of cells, then visit them in an
+        # order that PREFERS edges and corners first — random uniform
+        # shuffling tends to leave the corners empty because central
+        # cells are equally likely to be picked, but humans read the
+        # map as "empty corners" if any cell is left out. Distance
+        # from the map center, descending, gets the corner cells
+        # placed first; remaining cells fill in toward the middle.
+        #
+        # Use a slightly oversized grid (~1.4×n) so the user gets one
+        # island per cell with empty cells acting as ocean breaks.
+        grid_n = max(2, int(math.ceil(math.sqrt(n_target * 1.4))))
+        cell_w = sx / grid_n
+        cell_h = sy / grid_n
+        cells = [(i, j) for i in range(grid_n) for j in range(grid_n)]
+
+        def _cell_priority(cell):
+            i, j = cell
+            cx_norm = (i + 0.5) / grid_n - 0.5
+            cy_norm = (j + 0.5) / grid_n - 0.5
+            # Negate so larger distance => smaller priority value =>
+            # picked first when sorted ascending.
+            return -(cx_norm * cx_norm + cy_norm * cy_norm) + rng.uniform(0, 0.02)
+
+        cells.sort(key=_cell_priority)
 
         islands: list[dict] = []
-        attempts = 0
-        while len(islands) < n_target and attempts < n_target * 30:
-            attempts += 1
-            theta = rng.uniform(0, 2 * math.pi)
-            r = rng.uniform(0, spread)
-            cx = r * math.cos(theta)
-            cy = r * math.sin(theta)
+        for (gi, gj) in cells:
+            if len(islands) >= n_target:
+                break
             new_r = rng.uniform(*self.radius_range)
+            cell_cx = -sx / 2 + (gi + 0.5) * cell_w
+            cell_cy = -sy / 2 + (gj + 0.5) * cell_h
+            # Jitter within the cell. Allow generous in-cell drift —
+            # islands can poke a little into neighboring cells, giving
+            # the spread a less-grid-y look.
+            jitter_x = cell_w * 0.55
+            jitter_y = cell_h * 0.55
+            cx = cell_cx + rng.uniform(-jitter_x, jitter_x)
+            cy = cell_cy + rng.uniform(-jitter_y, jitter_y)
+            # Clamp to extent (with margin); a big island in a small map
+            # can otherwise drift out.
+            margin = self.edge_margin + new_r
+            cx = float(np.clip(cx, -sx / 2 + margin, sx / 2 - margin))
+            cy = float(np.clip(cy, -sy / 2 + margin, sy / 2 - margin))
+            # Reject when centers are closer than r₁+r₂ + keep_out —
+            # i.e. islands stay distinct with a clear water gap. The
+            # "twin" style provides intentional overlap when wanted.
             too_close = any(
                 math.hypot(cx - i["x"], cy - i["y"])
-                < (i["r"] + new_r + self.keep_out_radius)
+                < (i["r"] + new_r) + self.keep_out_radius
                 for i in islands
             )
             if too_close:
@@ -552,18 +844,22 @@ class IslandCluster:
                 "x": cx, "y": cy,
                 "h": rng.uniform(*self.height_range),
                 "r": new_r,
+                "style": rng.choices(style_names, weights=style_probs)[0],
             })
 
-        spheres = []
-        for i in islands:
-            sphere_r = (i["r"] ** 2 + i["h"] ** 2) / (2 * max(i["h"], 0.01))
-            sphere_cz = i["h"] - sphere_r
-            spheres.append(sdf_lib.sphere(sphere_r, center=(i["x"], i["y"], sphere_cz)))
-
-        if not spheres:
+        sdfs = [
+            _build_island_sdf(
+                i["style"], i["x"], i["y"], i["r"], i["h"], rng,
+                seed=seed + idx,
+                warp_amplitude=warp_amp_frac * i["r"],
+                warp_period=warp_period,
+            )
+            for idx, i in enumerate(islands)
+        ]
+        if not sdfs:
             island_sdf: sdf_lib.SDF = lambda p: np.full(p.shape[:-1], 1e6, dtype=np.float32)
         else:
-            island_sdf = sdf_lib.union(*spheres)
+            island_sdf = sdf_lib.union(*sdfs)
 
         def make_h(prev_h: HeightFn) -> HeightFn:
             def h_with_islands(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -573,7 +869,8 @@ class IslandCluster:
                     r2 = (x - i["x"]) ** 2 + (y - i["y"]) ** 2
                     d_norm = np.sqrt(r2) / i["r"]
                     mask = _smoothstep(1.0 - d_norm)
-                    out = np.maximum(out, base_h + i["h"] * mask)
+                    h_eff = i["h"] * (0.45 if i["style"] == "spit" else 1.0)
+                    out = np.maximum(out, base_h + h_eff * mask)
                 return out
             return h_with_islands
 

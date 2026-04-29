@@ -30,6 +30,7 @@ from . import sdf  # re-export the SDF library as a submodule
 from .bases import (
     AlpineBase,
     DesertBase,
+    EmptyBase,
     MesaPlateauBase,
     OceanBase,
     RollingHillsBase,
@@ -58,6 +59,7 @@ __all__ = [
     "CaveSystem",
     "Cliff",
     "DesertBase",
+    "EmptyBase",
     "FeatureSpec",
     "Gorge",
     "HeightFn",

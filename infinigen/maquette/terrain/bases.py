@@ -78,27 +78,59 @@ class DesertBase(TerrainBase):
 
 
 @dataclass
-class OceanBase(TerrainBase):
-    """A flat water plane at z=0 with imperceptible wave noise.
+class EmptyBase(TerrainBase):
+    """No ground — produces an SDF that's always far outside the
+    iso-surface, so marching cubes generates no base mesh.
 
-    Use sparingly as a *terrain* base — the asset side of Maquette also
-    has `LowPolyWaterSurfaceFactory` which builds a small flat plane
-    cheaper. This base exists for prompts that ask for a sea/ocean as the
-    primary ground, where features (islands, cliffs) will rise out of
-    the water.
+    Use for water-dominated scenes (archipelago, atoll, open ocean,
+    deep lake) where the water volume is the visual ground and a
+    seafloor mesh would just be hidden polycount. Pair with
+    `IslandCluster`, `MountainPeak(center=...)`, etc., as the only
+    sources of visible geometry, and add a translucent water box
+    on top.
     """
 
+    def to_spec(self, extent, seed):
+        far = float(1e6)
+
+        def empty_sdf(p):
+            return np.full(p.shape[:-1], far, dtype=np.float32)
+
+        def empty_h(x, y):
+            x_arr = np.asarray(x, dtype=np.float32)
+            return np.full_like(x_arr, -far, dtype=np.float32)
+
+        return BaseSpec(sdf=empty_sdf, height_fn=empty_h)
+
+
+@dataclass
+class OceanBase(TerrainBase):
+    """Submerged seafloor — a flat plane sitting below z=0 with optional
+    gentle dune noise (for the ocean floor seen between islands).
+
+    Pair with a separate water plane at z=0 (the renderer or
+    `LowPolyWaterSurfaceFactory` adds it) so islands rise above the
+    waterline. `floor_depth` is how far the seafloor sits below z=0;
+    keep it modest (1-2m) so island bases blend into a beach/shoreline
+    instead of dropping into a trench.
+    """
+
+    floor_depth: float = 1.5
     wave_height: float = 0.1
     wave_period: float = 30.0
 
     def to_spec(self, extent, seed):
-        noise = sdf_lib.perlin_2d(
+        wave_noise = sdf_lib.perlin_2d(
             seed=seed, period=self.wave_period, amplitude=self.wave_height,
             octaves=1, persistence=0.5,
         )
+        depth = float(self.floor_depth)
+
+        def height_fn(x, y):
+            return wave_noise(x, y) - depth
         return BaseSpec(
-            sdf=sdf_lib.height_field(noise),
-            height_fn=noise,
+            sdf=sdf_lib.height_field(height_fn),
+            height_fn=height_fn,
         )
 
 
@@ -300,6 +332,7 @@ class AlpineBase(TerrainBase):
 _BASES = {
     "desert": DesertBase,
     "ocean": OceanBase,
+    "empty": EmptyBase,
     "rolling_hills": RollingHillsBase,
     "alpine": AlpineBase,
     "mesa_plateau": MesaPlateauBase,

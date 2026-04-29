@@ -285,6 +285,168 @@ def cylinder_organic(
     return f
 
 
+def island_dome(
+    radius: float,
+    height: float,
+    *,
+    center: Vec3 = (0.0, 0.0, 0.0),
+    horizontal_components: Sequence[tuple[int, float, float]] = (),
+    radial_shift: tuple[float, float] = (0.0, 0.0),
+    surface_relief: Sequence[tuple[int, int, float, float, float]] = (),
+) -> SDF:
+    """An asymmetric dome — a sphere-cap whose XY footprint is a potato
+    silhouette (n=1 + n=2 harmonics) rather than a circle.
+
+    `radius` is the at-water-level (z=cz) horizontal radius, `height` is
+    the peak height above center z. Internally fits a sphere of radius
+    `R = (r²+h²)/(2h)` whose cap chord intersects z=cz at radius
+    `radius`. Then the XY distance is scaled by 1/(1+perturb(θ)) so the
+    apparent radius varies with angle — gives the potato outline without
+    breaking the sphere SDF's distance-field property too badly.
+
+    `surface_relief` is a list of `(n_theta, n_z, amp, phase_t, phase_z)`
+    that adds high-frequency dimples/bumps to the outer surface — helps
+    the dome read as rocky/sandy rather than glass-smooth. `n_z` here is
+    interpreted relative to z normalised by `height`.
+    """
+    cx, cy, cz = center
+    h = max(height, 0.01)
+    R = (radius * radius + h * h) / (2.0 * h)
+    sphere_cz = cz + h - R
+    h_comp = list(horizontal_components)
+    s_comp = list(surface_relief)
+    sx, sy = float(radial_shift[0]), float(radial_shift[1])
+    inv_radius = 1.0 / max(radius, 0.01)
+
+    def f(p: np.ndarray) -> np.ndarray:
+        dx = p[..., 0] - cx - sx
+        dy = p[..., 1] - cy - sy
+        dz = p[..., 2] - sphere_cz
+        r_xy = np.sqrt(dx * dx + dy * dy + 1e-8)
+        theta = np.arctan2(dy, dx)
+        perturb = np.zeros_like(theta, dtype=np.float32)
+        for n, amp, phase in h_comp:
+            perturb = perturb + np.float32(amp * inv_radius) * np.cos(n * theta + phase).astype(np.float32)
+        # Clamp so we never invert the silhouette (1+perturb >= 0.2).
+        scale = 1.0 / np.maximum(1.0 + perturb, np.float32(0.2))
+        scaled_xy = r_xy * scale
+        d = np.sqrt(scaled_xy * scaled_xy + dz * dz) - R
+        if s_comp:
+            z_norm = (p[..., 2] - cz) / h  # 0 at water, 1 at peak
+            relief = np.zeros_like(theta, dtype=np.float32)
+            for n_t, n_z, amp, p_t, p_z in s_comp:
+                relief = relief + np.float32(amp) * np.cos(
+                    n_t * theta + p_t
+                ).astype(np.float32) * np.cos(
+                    n_z * z_norm * 2.0 * np.pi + p_z
+                ).astype(np.float32)
+            d = d - relief
+        return d.astype(np.float32)
+
+    return f
+
+
+def island_plateau(
+    radius: float,
+    height: float,
+    *,
+    center: Vec3 = (0.0, 0.0, 0.0),
+    plateau_frac: float = 0.65,
+    transition_softness: float = 1.0,
+    horizontal_components: Sequence[tuple[int, float, float]] = (),
+    radial_shift: tuple[float, float] = (0.0, 0.0),
+) -> SDF:
+    """A flat-topped island modelled as a height field — most of the
+    surface area is at full height `height`, with a soft beach-slope
+    transition near the rim, and outside the rim the surface
+    "disappears" (treated as far below z=0 so no iso-surface is drawn
+    there).
+
+    `plateau_frac` controls how much of the radius is the flat top
+    (0.65 = inner 65% at full height, outer 35% smoothsteps down).
+    `transition_softness` ≥ 1 stretches the slope band wider.
+
+    Pair with `EmptyBase` and a translucent water box for ocean
+    scenes. The SDF is a vertical signed distance (z - surface_z) —
+    well-behaved under domain warp because the gradient stays
+    bounded everywhere except the rim discontinuity, which marching
+    cubes handles cleanly.
+    """
+    cx, cy, cz = center
+    h = max(float(height), 0.01)
+    h_comp = list(horizontal_components)
+    sx, sy = float(radial_shift[0]), float(radial_shift[1])
+    plateau_r = max(0.0, min(0.95, float(plateau_frac))) * radius
+    transition = max(radius - plateau_r, 0.5) * max(float(transition_softness), 0.1)
+    # Drop band: smooth descent past the rim into "no surface here"
+    # territory. Smoothing this avoids a hard SDF discontinuity at the
+    # rim, which would otherwise produce marching-cubes hair under
+    # domain warp.
+    drop_band = max(transition, 1.5)
+    drop_depth = 80.0  # how far the surface drops past the rim — enough
+                      # that the iso-surface is well below the sample range.
+
+    def f(p: np.ndarray) -> np.ndarray:
+        dx = (p[..., 0] - cx - sx).astype(np.float32)
+        dy = (p[..., 1] - cy - sy).astype(np.float32)
+        r_xy = np.sqrt(dx * dx + dy * dy + 1e-8).astype(np.float32)
+        theta = np.arctan2(dy, dx).astype(np.float32)
+        r_eff = np.full_like(theta, float(radius), dtype=np.float32)
+        for n, amp, phase in h_comp:
+            r_eff = r_eff + np.float32(amp) * np.cos(n * theta + phase).astype(np.float32)
+        # Plateau rise: 0 at rim, 1 deep inside the plateau.
+        plateau_t = np.clip((r_eff - r_xy) / np.maximum(transition, 0.5), 0.0, 1.0).astype(np.float32)
+        plateau_t = (plateau_t * plateau_t * (3.0 - 2.0 * plateau_t)).astype(np.float32)
+        # Drop past the rim: 0 at rim, 1 once we're a `drop_band` past.
+        drop_t = np.clip((r_xy - r_eff) / np.float32(drop_band), 0.0, 1.0).astype(np.float32)
+        drop_t = (drop_t * drop_t * (3.0 - 2.0 * drop_t)).astype(np.float32)
+        # Surface z: plateau rise inside, smooth fall past the rim. The
+        # crossover at the rim itself is z = cz, so the iso-surface
+        # there meets the waterline cleanly.
+        surface_z = (cz + h * plateau_t - drop_depth * drop_t).astype(np.float32)
+        return (p[..., 2] - surface_z).astype(np.float32)
+
+    return f
+
+
+def warp_xy(
+    base_sdf: SDF,
+    *,
+    noise_x: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    noise_y: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    amplitude: float,
+) -> SDF:
+    """Domain-warp wrapper. Before evaluating `base_sdf(p)`, perturb
+    the XY coordinates by `(amp · noise_x(x,y), amp · noise_y(x,y))`.
+
+    With low-frequency 2D noise + amplitude ~30-50% of the underlying
+    feature radius, this turns smooth circular outlines into fractal,
+    fjord-carved coastlines without changing the primitive. Two
+    independent noise functions (different seeds) → uncorrelated x/y
+    perturbations.
+
+    Useful applied per-island for varied silhouettes, or applied at the
+    cluster level for a coherent "current" / "wind direction" warp
+    across the whole map.
+
+    Reference: iquilezles.org/articles/warp/
+    """
+    a = float(amplitude)
+
+    def f(p: np.ndarray) -> np.ndarray:
+        x = p[..., 0]
+        y = p[..., 1]
+        wx = (noise_x(x, y) * a).astype(np.float32)
+        wy = (noise_y(x, y) * a).astype(np.float32)
+        # Build a warped point array. Use a copy so we don't mutate p.
+        p_warped = p.copy()
+        p_warped[..., 0] = (x + wx).astype(np.float32)
+        p_warped[..., 1] = (y + wy).astype(np.float32)
+        return base_sdf(p_warped)
+
+    return f
+
+
 def box_rotated(
     size: Vec3,
     *,

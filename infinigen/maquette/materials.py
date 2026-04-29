@@ -71,6 +71,110 @@ def apply_palette(obj: bpy.types.Object, palette_key: str) -> bpy.types.Object:
     return obj
 
 
+_WATER_MAT_NAME = "Maquette_water_translucent"
+
+
+def _get_or_create_water_material() -> bpy.types.Material:
+    """Stylised low-poly water — opaque, banded fresnel rim, voronoi
+    cell-pattern shimmer overlay. Built per the recipe in memory
+    `project_low_poly_water.md`:
+
+      - Opaque (no transmission, no alpha BLEND) — depth communicated
+        through *color*, not transparency.
+      - Saturated teal base (shallow) → deep indigo (rim accent),
+        mixed via a Layer-Weight fresnel with **Constant**-interpolated
+        ColorRamp so the transition reads as 2 flat bands instead of
+        a smooth glossy specular.
+      - Voronoi cell-pattern overlay at low intensity for hand-drawn
+        wave shimmer (no animation here — animation needs a frame
+        driver which can be added per-scene).
+
+    Reused across every water-using factory. Always applied via a
+    mesh that has *thickness* — never a flat plane — so the volume
+    reads as a body of water (see feedback memory `water_material_rule`).
+    """
+    mat = bpy.data.materials.get(_WATER_MAT_NAME)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(_WATER_MAT_NAME)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+
+    # Deep saturated teal base — opaque, painterly. Specular killed
+    # so HDRI sky doesn't reflect glossily.
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    deep_color = (0.06, 0.32, 0.50, 1.0)
+    bsdf.inputs["Base Color"].default_value = deep_color
+    bsdf.inputs["Roughness"].default_value = 0.65
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["IOR"].default_value = 1.33
+    for key in ("Specular IOR Level", "Specular"):
+        if key in bsdf.inputs:
+            bsdf.inputs[key].default_value = 0.05
+
+    # Voronoi cell-pattern shimmer — adds the hand-drawn "wave cell"
+    # texture to the flat base. ColorRamp Constant interpolation
+    # quantizes to two flat tonal bands (deep + a slightly-paler
+    # crest tint), keeping the painterly read.
+    tex_coord = nt.nodes.new("ShaderNodeTexCoord")
+    mapping = nt.nodes.new("ShaderNodeMapping")
+    mapping.inputs["Scale"].default_value = (0.06, 0.06, 0.06)
+    nt.links.new(tex_coord.outputs["Object"], mapping.inputs["Vector"])
+    voronoi = nt.nodes.new("ShaderNodeTexVoronoi")
+    voronoi.feature = "DISTANCE_TO_EDGE"
+    voronoi.inputs["Scale"].default_value = 1.5
+    nt.links.new(mapping.outputs["Vector"], voronoi.inputs["Vector"])
+    voronoi_ramp = nt.nodes.new("ShaderNodeValToRGB")
+    voronoi_ramp.color_ramp.interpolation = "CONSTANT"
+    # Voronoi "Distance to Edge" returns LARGE in cell centers and
+    # small near edges. So the deep base is the cell-center color
+    # (the bulk of the surface), and the paler crest tint shows
+    # only as thin streaks where neighbouring cells meet.
+    voronoi_ramp.color_ramp.elements[0].position = 0.0
+    voronoi_ramp.color_ramp.elements[0].color = (0.16, 0.50, 0.66, 1.0)  # paler crest streak
+    voronoi_ramp.color_ramp.elements[1].position = 0.04
+    voronoi_ramp.color_ramp.elements[1].color = deep_color  # bulk of the body
+    nt.links.new(voronoi.outputs["Distance"], voronoi_ramp.inputs["Fac"])
+    nt.links.new(voronoi_ramp.outputs["Color"], bsdf.inputs["Base Color"])
+
+    # Banded fresnel rim — added as EMISSION so the rim accent only
+    # brightens at grazing angles without washing out the deep base
+    # color when viewed top-down. Constant-interp ramp = 2-band rim.
+    fresnel = nt.nodes.new("ShaderNodeFresnel")
+    fresnel.inputs["IOR"].default_value = 1.33
+    fres_ramp = nt.nodes.new("ShaderNodeValToRGB")
+    fres_ramp.color_ramp.interpolation = "CONSTANT"
+    fres_ramp.color_ramp.elements[0].position = 0.0
+    fres_ramp.color_ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)  # no emission
+    fres_ramp.color_ramp.elements[1].position = 0.55
+    fres_ramp.color_ramp.elements[1].color = (0.50, 0.82, 0.90, 1.0)  # pale grazing rim
+    nt.links.new(fresnel.outputs["Fac"], fres_ramp.inputs["Fac"])
+    if "Emission Color" in bsdf.inputs:
+        nt.links.new(fres_ramp.outputs["Color"], bsdf.inputs["Emission Color"])
+        bsdf.inputs["Emission Strength"].default_value = 0.45
+
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    mat.blend_method = "OPAQUE"
+    return mat
+
+
+def apply_water_material(obj: bpy.types.Object) -> bpy.types.Object:
+    """Replace `obj`'s materials with the translucent Maquette water
+    shader. Caller must build `obj` as a mesh with non-zero Z thickness
+    (a box, not a plane) — see `feedback_water_material_rule`.
+    """
+    if obj.type != "MESH":
+        return obj
+    mat = _get_or_create_water_material()
+    obj.data.materials.clear()
+    obj.data.materials.append(mat)
+    return obj
+
+
 def apply_palette_slots(
     obj: bpy.types.Object, slot_colors: list[str]
 ) -> bpy.types.Object:
