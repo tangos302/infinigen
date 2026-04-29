@@ -84,6 +84,87 @@ def cylinder(radius: float, height: float, center: Vec3 = (0.0, 0.0, 0.0)) -> SD
     return f
 
 
+def cylinder_organic(
+    radius: float,
+    height: float,
+    *,
+    center: Vec3 = (0.0, 0.0, 0.0),
+    components: Sequence[tuple[int, float, float]] = (),
+    radial_shift: tuple[float, float] = (0.0, 0.0),
+) -> SDF:
+    """A z-axis-aligned cylinder whose radius varies with angle as the
+    SUM of several cosine harmonics with random phases:
+
+        r(θ) = radius + Σ_i amp_i · cos(n_i · θ + phase_i)
+
+    With 2–4 components at different `n` and random phases, the result
+    is a smooth, ASYMMETRIC outline — much more natural than a single
+    cosine (which gives regular flower-petal lobes). Used by MesaCluster
+    to give every mesa a unique organic profile.
+
+    `radial_shift` translates the radius origin, giving an overall
+    lean/offset to the mesa silhouette (one side wider than the other).
+
+    `components` is a list of `(n_lobes, amplitude, phase)` triples;
+    typically generated per-mesa from the seeded RNG. Empty list →
+    perfect cylinder.
+    """
+    c = np.asarray(center, dtype=np.float32)
+    half_h = height * 0.5
+    sx, sy = float(radial_shift[0]), float(radial_shift[1])
+
+    def f(p: np.ndarray) -> np.ndarray:
+        d = p - c
+        # Apply radial origin shift in XY only.
+        x = d[..., 0] - sx
+        y = d[..., 1] - sy
+        angle = np.arctan2(y, x)
+        r_local = np.sqrt(x * x + y * y)
+        r_target = np.full_like(r_local, radius)
+        for n, amp, phase in components:
+            r_target = r_target + amp * np.cos(n * angle + phase)
+        radial = r_local - r_target
+        vertical = np.abs(d[..., 2]) - half_h
+        outside = np.linalg.norm(
+            np.stack([np.maximum(radial, 0.0), np.maximum(vertical, 0.0)], axis=-1),
+            axis=-1,
+        )
+        inside = np.minimum(np.maximum(radial, vertical), 0.0)
+        return outside + inside
+
+    return f
+
+
+def box_rotated(
+    size: Vec3,
+    *,
+    center: Vec3 = (0.0, 0.0, 0.0),
+    angle: float = 0.0,
+) -> SDF:
+    """An axis-aligned box rotated by `angle` (radians) around the Z axis
+    about its `center`. Used for square-footprint mesa columns whose
+    corners read as square but vary in orientation.
+    """
+    cx, cy, cz = center
+    cos_a = float(np.cos(angle))
+    sin_a = float(np.sin(angle))
+    half = (size[0] / 2, size[1] / 2, size[2] / 2)
+    half_arr = np.asarray(half, dtype=np.float32)
+
+    def f(p: np.ndarray) -> np.ndarray:
+        # Translate p so center is at origin, then rotate by -angle.
+        x_local = (p[..., 0] - cx) * cos_a + (p[..., 1] - cy) * sin_a
+        y_local = -(p[..., 0] - cx) * sin_a + (p[..., 1] - cy) * cos_a
+        z_local = p[..., 2] - cz
+        local = np.stack([x_local, y_local, z_local], axis=-1)
+        q = np.abs(local) - half_arr
+        outside = np.linalg.norm(np.maximum(q, 0.0), axis=-1)
+        inside = np.minimum(np.max(q, axis=-1), 0.0)
+        return outside + inside
+
+    return f
+
+
 def plane(normal: Vec3 = (0.0, 0.0, 1.0), offset: float = 0.0) -> SDF:
     """An infinite plane. `normal` should be unit length; `offset` is the
     signed distance from origin along the normal. Default = ground at z=0."""

@@ -112,12 +112,13 @@ class LowPolyTerrainFactory(AssetFactory):
         keep_out_zones: list[tuple[float, float, float]] = []
 
         for feature in self.features:
-            spec: FeatureSpec = feature.to_spec(self.extent, self.factory_seed)
-            terrain_sdf = _apply_op(terrain_sdf, spec)
-            if spec.height_modifier is not None:
-                height_fn = spec.height_modifier(height_fn)
-            scatter_zones.extend(spec.scatter_zones)
-            keep_out_zones.extend(spec.keep_out_zones)
+            specs = feature.to_specs(self.extent, self.factory_seed)
+            for spec in specs:
+                terrain_sdf = _apply_op(terrain_sdf, spec)
+                if spec.height_modifier is not None:
+                    height_fn = spec.height_modifier(height_fn)
+                scatter_zones.extend(spec.scatter_zones)
+                keep_out_zones.extend(spec.keep_out_zones)
 
         self.height_fn = height_fn
         self.scatter_zones = scatter_zones
@@ -153,22 +154,29 @@ class LowPolyTerrainFactory(AssetFactory):
         """Sniff the features list for likely z-bounds. Conservative —
         we'd rather waste a few voxels of vertical sampling than have the
         marching cubes volume miss the top of a mesa or the bottom of a
-        cave.
+        cave. Most magnitude params on features are now tuple ranges
+        (procedural variation), so we take the upper bound of any tuple.
         """
+        def _upper(v) -> float:
+            if v is None:
+                return 0.0
+            if isinstance(v, tuple) and len(v) == 2:
+                return float(v[1])
+            return float(v)
+
         z_min = -2.0
         z_max = 2.0
         for f in self.features:
-            # Inspect well-known feature types via attribute probing —
-            # avoids importing each class here for circularity reasons.
-            depth = getattr(f, "depth", 0)
-            if depth:
-                z_min = min(z_min, -float(depth) - 4.0)
-            for attr in ("height", "height_range"):
+            # Subtractive depth: Gorge/Lake/Canyon/Quarry/CaveSystem
+            for attr in ("depth", "total_depth"):
                 v = getattr(f, attr, None)
-                if v is None:
-                    continue
-                hi = v[1] if isinstance(v, tuple) else v
-                z_max = max(z_max, float(hi) + 3.0)
+                if v is not None:
+                    z_min = min(z_min, -_upper(v) - 4.0)
+            # Additive heights: MountainPeak / Cliff / MesaCluster wall etc.
+            for attr in ("height", "height_range", "wall_mesa_height_range"):
+                v = getattr(f, attr, None)
+                if v is not None:
+                    z_max = max(z_max, _upper(v) + 3.0)
         return (z_min, z_max)
 
 

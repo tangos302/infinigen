@@ -38,6 +38,7 @@ from .bases import (
 from .composition import BaseSpec, FeatureSpec, HeightFn
 from .factory import LowPolyTerrainFactory
 from .features import (
+    Canyon,
     CaveSystem,
     Cliff,
     Gorge,
@@ -45,12 +46,14 @@ from .features import (
     Lake,
     MesaCluster,
     MountainPeak,
+    Quarry,
 )
 from .marching import build_mesh, mesh_to_blender, surface_height_at
 
 __all__ = [
     "AlpineBase",
     "BaseSpec",
+    "Canyon",
     "CaveSystem",
     "Cliff",
     "DesertBase",
@@ -63,6 +66,7 @@ __all__ = [
     "MesaCluster",
     "MountainPeak",
     "OceanBase",
+    "Quarry",
     "RollingHillsBase",
     "TerrainBase",
     "base_from_name",
