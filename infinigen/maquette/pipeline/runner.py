@@ -99,36 +99,115 @@ def _read_text(p: Path) -> str:
 
 _DEBUG_NARRATIVE_INSTRUCTIONS = """\
 
-## DEBUG MODE — narrate your reasoning
+## DEBUG MODE — narrate your plan before writing the script
 
-This is a DEBUG run. Before the ```python build script block, output a
-section titled exactly:
+This is a DEBUG run. BEFORE the python build script, output a section
+titled exactly:
 
 ```
 ## DEBUG_NARRATIVE
 ```
 
-Inside that section, in plain English (markdown allowed), walk through
-your decisions step by step so a human reading the debug page can
-follow your thinking. Cover at minimum:
+Walk through your plan in the ORDER and STRUCTURE below. Use the
+exact subheadings shown. Designers read this to validate your choices
+before looking at the script — vague or hand-waved sections waste
+their time. Be concrete: archetype names, counts, placements, palette
+keys.
 
-1. **Understanding the prompt / image(s)** — what scene the user wants,
-   what mood/palette/silhouette you're picking up from any reference
-   images.
-2. **Scene plan** — which biome/terrain you chose, which factories you
-   plan to use, why those (vs alternatives).
-3. **Per-asset reasoning** — for each major asset class, why this
-   archetype, what palette slots, where it sits in the layout, and
-   roughly how many you'll spawn.
-4. **Missing factories** — for each `REQUESTED_ASSET`, what you wished
-   existed and what existing factory you used as a stand-in instead.
-5. **Lighting + camera choice** — which preset and why it fits the
-   prompt's mood.
+### 1. Prompt understanding
 
-Keep each section short (2-5 sentences). After the narrative section
-ends, write the python build script in the usual fenced block. The
-narrative is for humans only — your build script must still stand on
-its own without referencing it.
+What scene the user wants in your own words (1-2 sentences). If
+reference images are attached, describe what you see in them: palette
+(2-3 hex codes), silhouettes, density, mood. End with one sentence
+that captures the feeling you're building toward — that sentence
+governs every decision below.
+
+### 2. Terrain + water (DECIDE THESE FIRST)
+
+The ground plane and any water bodies set the biome and rule out half
+the catalog. A snow biome forbids palm/cactus; an ocean-dominated
+scene won't have a torii or windmill in the centre. Lock these in
+before picking landmarks or objects.
+
+For EACH factory you'll use from the **terrain** and **water**
+categories, list:
+
+- **Factory class name** (e.g. `LowPolyTreeFactory`)
+- **Archetypes** — every one you plan to spawn, with explicit count
+  per archetype (multiple archetypes per factory is encouraged for
+  variety). Format: `pine × 8, dead × 2`.
+- **Why these archetypes** — one sentence tying them to the biome
+  and the governing feeling sentence from §1.
+
+Then, separately:
+- **Ground plane**: base colour as RGB tuple or hex AND the palette
+  key it corresponds to (e.g. `ground_grass`).
+- **Water present?** Yes/no. If yes: factory, archetype, footprint
+  extent in BU. If no, say "no water — landlocked scene".
+
+### 3. Landmarks (the 1-3 hero structures)
+
+The focal points the camera frames. Same drill:
+
+- **Factory + archetype(s) + per-archetype count**.
+- **Layout**: centre, off-axis, on a rise, beside the water, etc.
+- **Why this combo reads as the prompt's hero** — one sentence.
+
+If the prompt has no obvious hero (open landscape), say so and skip
+this section.
+
+### 4. Objects / scatter / props (fill in around the heroes)
+
+Everything decorating the scene without being the subject. Group by
+factory; multiple archetypes per factory expected.
+
+- **Factory + archetypes + counts**.
+- **Where they cluster** — yard scatter, riprap edge, path props,
+  forest ring, etc. Reference the canonical layout patterns from the
+  catalog when applicable.
+
+### 5. Missing factories OR missing archetypes
+
+If you need an asset class OR an archetype-variant the catalog
+doesn't have, follow this protocol for each gap. Do not skip steps.
+
+a. **Name it.** Either a proposed `LowPoly<X>Factory` (whole missing
+   class) OR `<ExistingFactory>:<archetype_name>` (archetype gap
+   inside a factory that already exists).
+b. **Describe.** Form, materials, scale (BU), function in the scene.
+   2-3 sentences max.
+c. **Compare.** List 1-3 closest existing factory+archetype
+   candidates. For each, say what matches and what's missing. Rank
+   them on this priority order — earlier criterion outranks later:
+     1. **silhouette** (shape from camera distance)
+     2. **materials** (colour family + finish)
+     3. **scale** (relative size in the scene)
+     4. **palette** (specific slot/colour-key match)
+d. **Decide.** Pick one stand-in. Note any parameter tweaks
+   (e.g. `scale=0.6`, `palette_color="rock_warm"`, `rotation_z=π/2`)
+   that bridge the gap. The build script must use this stand-in.
+e. **Emit.** Add a `# REQUESTED_ASSET: <name> — <one-line desc>`
+   line at the top of the python script (whole-class gaps only;
+   archetype gaps go as `# REQUESTED_ARCHETYPE: <Factory>:<arch> — <desc>`).
+
+If you have NO gaps, write "No missing factories or archetypes — the
+catalog covered the prompt cleanly."
+
+### 6. Lighting + camera
+
+- **Lighting recipe**: pick one preset name from the catalog
+  (daytime / golden hour / dawn / twilight / wasteland-midday) and
+  justify in one sentence why it matches the prompt's mood.
+- **Camera**: position `(x, y, z)`, target `(tx, ty, tz)`, lens (35
+  for wide scene, 50 for tight prop). One sentence on why this frame
+  captures the hero subject from §3.
+
+---
+
+After §6 ends, write the python build script in the usual
+```python ... ``` fenced block. The script is the source of truth
+for execution — your narrative is for humans only and the script
+must stand on its own.
 """
 
 
