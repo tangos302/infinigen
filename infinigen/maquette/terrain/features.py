@@ -76,40 +76,28 @@ def _build_mesa_sdf(
     rng: random.Random,
 ):
     """Build one mesa SDF in the chosen style. Returns the SDF for a
-    single mesa column, vertically z-centered at z=0 (top at z=height,
-    bottom at z=-height; the base ground trims the bottom).
+    single mesa column, z-centered at z=0 (top at z=height, bottom at
+    z=-height; the base ground trims the bottom).
 
-    Two styles, both designed to read as natural eroded rock:
-      "natural" — cylinder with a multi-frequency cosine perturbation
-                  on its radius (random phases per harmonic, low
-                  amplitude). Asymmetric, smooth, organic.
-      "round"   — clean cylinder. Useful as an occasional accent;
-                  reads as an unweathered rock pillar. Use sparingly.
-
-    The earlier `lobed` (single cos → flower-petals), `rounded_square`
-    (rotated cube), and `eroded` (multi-cylinder lump) styles produced
-    visibly artificial / toy-looking mesas. They've been removed in
-    favor of `natural`, which uses a sum of 3 cosines with random
-    phases — perceptually equivalent to perlin-noise on the radius
-    profile but cheaper to evaluate.
+    Three styles, ordered by visual richness:
+      "round"     — clean cylinder. Use as occasional accent.
+      "natural"   — gently asymmetric outline (multi-harmonic radius).
+                    Reads as a slightly-weathered cylinder.
+      "weathered" — natural + vertical fluting (erosion channels) +
+                    talus skirt at the base (slight outward flare).
+                    Default for desert-mesa scenes — closest to what
+                    real eroded mesas actually look like.
     """
     h2 = height * 2
     if style == "round":
         return sdf_lib.cylinder(radius=radius, height=h2, center=(cx, cy, 0))
     if style == "natural":
-        # 3 random cosine harmonics give a smooth asymmetric outline.
-        # Frequencies kept LOW (n=1..3) so the mesa silhouette has broad
-        # bumps rather than fine ribbing — fine ribbing reads as machined.
-        # Amplitudes are 3-7% of radius — enough irregularity to escape
-        # "perfect cylinder" without becoming starfish-shaped.
         components = []
         for _ in range(3):
             n = rng.randint(1, 3)
             amp = rng.uniform(0.03, 0.07) * radius
             phase = rng.uniform(0, 2 * math.pi)
             components.append((n, amp, phase))
-        # A small radial shift gives the mesa an overall lean — one side
-        # naturally wider than the other.
         shift_theta = rng.uniform(0, 2 * math.pi)
         shift_mag = rng.uniform(0.0, 0.10) * radius
         radial_shift = (
@@ -121,11 +109,84 @@ def _build_mesa_sdf(
             components=components,
             radial_shift=radial_shift,
         )
+    if style == "weathered":
+        # Horizontal silhouette — a strong n=1 component (dominant
+        # ellipse axis) plus a smaller n=2 component (asymmetric bulge).
+        # AVOID n=3+ harmonics — they produce triangular/square outlines
+        # that read as geometric, not natural. The combination of n=1
+        # and n=2 with random phases gives the "potato silhouette" look.
+        # n=1 dominates → "egg" axis. n=2 adds an asymmetric bulge.
+        # Amplitudes are a fraction of radius; combined ~25-40% peak-to-peak
+        # is enough to read as potato silhouette from top-down without
+        # producing geometric outlines. Lower amplitudes (~10%) read as
+        # circles at typical 5-10m mesa radii.
+        horizontal = [
+            (1, rng.uniform(0.18, 0.30) * radius, rng.uniform(0, 2 * math.pi)),
+            (2, rng.uniform(0.06, 0.12) * radius, rng.uniform(0, 2 * math.pi)),
+        ]
+        shift_theta = rng.uniform(0, 2 * math.pi)
+        shift_mag = rng.uniform(0.0, 0.08) * radius
+        radial_shift = (
+            shift_mag * math.cos(shift_theta),
+            shift_mag * math.sin(shift_theta),
+        )
+        # Vertical fluting — 3 components at different (n_theta, n_z).
+        fluting = []
+        for _ in range(3):
+            n_t = rng.randint(8, 16)
+            n_z = rng.randint(1, 3)
+            amp = rng.uniform(0.015, 0.035) * radius
+            phase_t = rng.uniform(0, 2 * math.pi)
+            phase_z = rng.uniform(0, 2 * math.pi)
+            fluting.append((n_t, n_z, amp, phase_t, phase_z))
+        # Talus skirt + subtle top taper.
+        base_flare = rng.uniform(0.05, 0.10)
+        flare_height_frac = rng.uniform(0.25, 0.40)
+        top_taper = rng.uniform(0.0, 0.04)
+        # NEW: column tilt — 70% of mesas get a small tilt (0-7% of
+        # height = 0-4° lean). 30% stay perfectly upright. Direction
+        # uniformly distributed.
+        if rng.random() < 0.7:
+            column_tilt_amount = rng.uniform(0.02, 0.07)
+            column_tilt_direction = rng.uniform(0, 2 * math.pi)
+        else:
+            column_tilt_amount = 0.0
+            column_tilt_direction = 0.0
+        # Top slope — linear tilt of the cap, one side a bit higher than
+        # the other. Up to ±0.4m drop across the radius keeps it as a
+        # subtle "dip" rather than a leaning roof.
+        top_slope_amount = rng.uniform(-0.4, 0.4)
+        top_slope_direction = rng.uniform(0, 2 * math.pi)
+        # Top relief — a SINGLE low-frequency cosine bump (n=1 or n=2).
+        # Multiple stacked cosines created radial-ridge patterns that
+        # read as star/flower-shaped tops from above. One bump at low
+        # amplitude (5-15 cm) just breaks the perfect-flat read without
+        # producing visible patterns.
+        top_relief = [(
+            rng.randint(1, 2),
+            rng.uniform(0.05, 0.15),
+            rng.uniform(0, 2 * math.pi),
+        )]
+        return sdf_lib.cylinder_weathered(
+            radius=radius, height=h2, center=(cx, cy, 0),
+            horizontal_components=horizontal,
+            radial_shift=radial_shift,
+            base_flare=base_flare,
+            flare_height_frac=flare_height_frac * (height / h2),
+            fluting_components=fluting,
+            top_taper=top_taper,
+            column_tilt_amount=column_tilt_amount,
+            column_tilt_direction=column_tilt_direction,
+            top_slope_amount=top_slope_amount,
+            top_slope_direction=top_slope_direction,
+            top_relief_components=top_relief,
+        )
     raise ValueError(f"unknown mesa style {style!r}")
 
 
-# 90/10 weight split — most mesas natural, occasional clean cylinder.
-_MESA_STYLE_DEFAULTS = {"natural": 9.0, "round": 1.0}
+# Weathered dominates — most natural-looking. `round` rare accent.
+# `natural` removed from defaults but still callable.
+_MESA_STYLE_DEFAULTS = {"weathered": 9.0, "round": 1.0}
 
 
 # ---------------------------------------------------------------------------
@@ -135,21 +196,35 @@ _MESA_STYLE_DEFAULTS = {"natural": 9.0, "round": 1.0}
 
 @dataclass
 class Gorge:
-    """A winding ravine carved through the terrain.
+    """A winding ravine — typically the main "breach" of a canyon scene
+    where objects (roads, structures, settlements) are placed.
 
-    Reads as a deep, narrow trench snaking from one edge to the other.
-    All magnitude params accept scalar OR `(min, max)` tuple; defaults
-    are tuples → seed-to-seed variation by default.
+    The default `half_width` is intentionally wide (4-7 m → 8-14 m floor
+    width) so the gorge reads as the central terrain feature rather than
+    a slim crack. Pass scalars / smaller ranges to lock specific values.
+
+    `top_clearance` controls how far ABOVE z=0 the carver extends. Set
+    high enough to cut through any plateau in the base. Default 30m
+    handles `MesaPlateauBase` (plateau heights up to ~25m) cleanly.
+
+    Each waypoint along the gorge path is published as a keep-out
+    zone so subsequent features (MesaCluster, etc.) can avoid placing
+    objects in the canyon's right-of-way.
     """
 
-    depth: ScalarOrRange = (8.0, 14.0)
-    half_width: ScalarOrRange = (2.0, 3.5)
+    depth: ScalarOrRange = (10.0, 16.0)
+    half_width: ScalarOrRange = (6.0, 10.0)
     n_waypoints: IntOrRange = (3, 5)
-    lateral_jitter: ScalarOrRange = (5.0, 10.0)
-    blend: ScalarOrRange = (1.0, 2.0)
+    lateral_jitter: ScalarOrRange = (6.0, 12.0)
+    blend: ScalarOrRange = (1.5, 2.5)
     axis: str = "y"
+    top_clearance: float = 30.0
+    # Extra padding around the gorge corridor that downstream features
+    # are expected to keep mesas clear of. The published keep-out zones
+    # have radius `half_width + keep_out_margin`.
+    keep_out_margin: ScalarOrRange = (3.0, 5.0)
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         sx, sy = extent
         rng = random.Random(seed * 1000 + 1)
         depth = _sample(self.depth, rng)
@@ -157,6 +232,8 @@ class Gorge:
         n_pts = max(2, _sample(self.n_waypoints, rng))
         jitter = _sample(self.lateral_jitter, rng)
         blend = _sample(self.blend, rng)
+        top_clearance = float(self.top_clearance)
+        keep_out_margin = _sample(self.keep_out_margin, rng)
 
         waypoints: list[tuple[float, float]] = []
         for i in range(n_pts):
@@ -176,19 +253,34 @@ class Gorge:
             else:
                 raise ValueError(f"Gorge.axis must be y|x|diagonal, got {self.axis!r}")
 
-        # z_extent must be tight enough that the carver STOPS carving below
-        # the canyon floor — otherwise marching cubes never finds a closed
-        # mesh at z = -depth, and the result has a hole through to the
-        # world background. half-extent = depth/2 + 2m buffer:
-        # carver active z ∈ [-depth-2, +2], floor closes at z = -depth-2.
+        # Carver active z ∈ [-depth-2, +top_clearance]. Floor closes at
+        # z = -depth-2 so marching cubes finds a clean canyon bottom;
+        # top extends up to `top_clearance` so the carver also slices
+        # through plateau material when the base is `MesaPlateauBase`.
+        z_center = (top_clearance - depth) / 2
+        z_half_extent = (top_clearance + depth) / 2 + 2
         carver = sdf_lib.line_xy(
             waypoints, radius=half_w,
-            z=-depth * 0.5, z_extent=depth * 0.5 + 2.0,
+            z=z_center, z_extent=z_half_extent,
         )
-        keep_outs = [(x, y, half_w + 1.5) for x, y in waypoints]
+        # Keep-out radius covers the canyon floor + the talus skirt
+        # margin. Mesas placed beyond this won't overlap the canyon.
+        keep_outs = [(x, y, half_w + keep_out_margin) for x, y in waypoints]
+        # Also publish midpoints so a long segment between waypoints
+        # also has keep-outs (otherwise mesas can spawn in the middle
+        # of a long canyon stretch).
+        midpoints = []
+        for i in range(len(waypoints) - 1):
+            ax, ay = waypoints[i]
+            bx, by = waypoints[i + 1]
+            midpoints.append((
+                (ax + bx) * 0.5,
+                (ay + by) * 0.5,
+                half_w + keep_out_margin,
+            ))
         return [FeatureSpec(
             sdf=carver, op="smooth_subtract", blend=blend,
-            keep_out_zones=keep_outs,
+            keep_out_zones=keep_outs + midpoints,
         )]
 
 
@@ -202,7 +294,7 @@ class Lake:
     depth: ScalarOrRange = (3.0, 6.0)
     blend: ScalarOrRange = (1.5, 3.0)
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 5)
         radius = _sample(self.radius, rng)
         depth = _sample(self.depth, rng)
@@ -229,7 +321,7 @@ class CaveSystem:
     region: tuple[tuple[float, float], tuple[float, float]] = ((-25, 25), (-25, 25))
     blend: ScalarOrRange = (0.8, 1.5)
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 2)
         n = max(1, _sample(self.n_chambers, rng))
         depth = _sample(self.depth, rng)
@@ -285,7 +377,7 @@ class Quarry:
     n_terraces: IntOrRange = (3, 5)
     blend: ScalarOrRange = (0.4, 0.9)
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 6)
         top_r = _sample(self.top_radius, rng)
         bot_r = _sample(self.bottom_radius, rng)
@@ -345,14 +437,25 @@ class MesaCluster:
     radius_range: tuple[float, float] = (4.0, 9.0)
     blend: ScalarOrRange = (2.0, 3.5)
     keep_out_radius: float = 14.0
-    # Style weights — `lobed` dominates because it reads most natural.
+    # Extra buffer to maintain between mesa edge and any existing
+    # keep-out zone (e.g. gorge corridor). Default 1m so mesas don't
+    # kiss the gorge edge.
+    avoid_buffer: float = 1.0
+    # Style weights — `weathered` dominates for natural-mesa look.
     style_weights: dict = field(default_factory=lambda: dict(_MESA_STYLE_DEFAULTS))
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(
+        self,
+        extent,
+        seed,
+        existing_keep_outs: list[tuple[float, float, float]] | None = None,
+        **_kwargs,
+    ) -> list[FeatureSpec]:
         sx, sy = extent
         rng = random.Random(seed * 1000 + 3)
         n_target = _sample(self.n, rng)
         blend = _sample(self.blend, rng)
+        existing_keep_outs = existing_keep_outs or []
 
         mesas: list[dict] = []
         attempts = 0
@@ -363,6 +466,13 @@ class MesaCluster:
             cx = rng.uniform(-sx * 0.45, sx * 0.45)
             cy = rng.uniform(-sy * 0.45, sy * 0.45)
             new_r = rng.uniform(*self.radius_range)
+            # Reject if too close to an upstream keep-out (e.g. gorge).
+            in_keep_out = any(
+                math.hypot(cx - kx, cy - ky) < (kr + new_r + self.avoid_buffer)
+                for kx, ky, kr in existing_keep_outs
+            )
+            if in_keep_out:
+                continue
             too_close = any(
                 math.hypot(cx - m["x"], cy - m["y"]) < (m["r"] + new_r * 0.6)
                 for m in mesas
@@ -416,7 +526,7 @@ class IslandCluster:
     spread_radius: ScalarOrRange = (25.0, 35.0)
     keep_out_radius: float = 4.0
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 4)
         n_target = _sample(self.n, rng)
         blend = _sample(self.blend, rng)
@@ -485,7 +595,7 @@ class MountainPeak:
     peak_radius: ScalarOrRange = (1.0, 2.5)
     blend: ScalarOrRange = (3.0, 5.0)
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 7)
         h = _sample(self.height, rng)
         base_r = _sample(self.base_radius, rng)
@@ -533,7 +643,7 @@ class Cliff:
     side: str = "high_x_pos"
     blend: ScalarOrRange = (1.0, 2.0)
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         rng = random.Random(seed * 1000 + 8)
         height = _sample(self.height, rng)
         blend = _sample(self.blend, rng)
@@ -619,7 +729,7 @@ class Canyon:
     wall_blend: ScalarOrRange = (2.0, 3.5)
     wall_style_weights: dict = field(default_factory=lambda: dict(_MESA_STYLE_DEFAULTS))
 
-    def to_specs(self, extent, seed) -> list[FeatureSpec]:
+    def to_specs(self, extent, seed, **_kwargs) -> list[FeatureSpec]:
         sx, sy = extent
         rng = random.Random(seed * 1000 + 9)
         depth = _sample(self.depth, rng)

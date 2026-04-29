@@ -30,6 +30,7 @@ from . import sdf  # re-export the SDF library as a submodule
 from .bases import (
     AlpineBase,
     DesertBase,
+    MesaPlateauBase,
     OceanBase,
     RollingHillsBase,
     TerrainBase,
@@ -64,6 +65,7 @@ __all__ = [
     "Lake",
     "LowPolyTerrainFactory",
     "MesaCluster",
+    "MesaPlateauBase",
     "MountainPeak",
     "OceanBase",
     "Quarry",

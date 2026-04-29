@@ -84,6 +84,156 @@ def cylinder(radius: float, height: float, center: Vec3 = (0.0, 0.0, 0.0)) -> SD
     return f
 
 
+def cylinder_weathered(
+    radius: float,
+    height: float,
+    *,
+    center: Vec3 = (0.0, 0.0, 0.0),
+    horizontal_components: Sequence[tuple[int, float, float]] = (),
+    radial_shift: tuple[float, float] = (0.0, 0.0),
+    base_flare: float = 0.08,
+    flare_height_frac: float = 0.30,
+    fluting_components: Sequence[tuple[int, float, float, float, float]] = (),
+    top_taper: float = 0.0,
+    column_tilt_amount: float = 0.0,
+    column_tilt_direction: float = 0.0,
+    top_slope_amount: float = 0.0,
+    top_slope_direction: float = 0.0,
+    top_relief_components: Sequence[tuple[int, float, float]] = (),
+) -> SDF:
+    """A weathered mesa cylinder with several classes of irregularity:
+
+      1. **Talus skirt** — `base_flare` (fraction of radius) widens the
+         cylinder at z=0 (the ground) tapering to 0 over
+         `flare_height_frac` of the total height. Reads as the cone of
+         broken rock at the base of every real mesa.
+
+      2. **Vertical fluting / scratches** — water-erosion channels.
+         Each `fluting_components` entry is `(n_theta, n_z, amp,
+         phase_theta, phase_z)`; the radius is perturbed by `amp ·
+         cos(n_theta · θ + phase_θ) · cos(n_z · z_norm · 2π + phase_z)`.
+         Multiple components at different (n_theta, n_z) sum into
+         irregular vertical streaks.
+
+      3. **Horizontal asymmetry** — `horizontal_components` is a list
+         of `(n_theta, amp, phase)` cosine harmonics summed onto the
+         radius; `radial_shift` offsets the cylinder's XY axis so the
+         silhouette isn't a perfect circle from above.
+
+      4. **Top taper** — `top_taper` (fraction of radius) narrows the
+         top so it's not razor-edged. Keep small (~0.05) for subtle
+         caprock weathering.
+
+      5. **Column tilt** — `column_tilt_amount` is the *fraction of
+         height* the top is displaced laterally; `column_tilt_direction`
+         is the tilt direction in radians (XY plane, 0 = +X). At
+         `tilt_amount=0.10` the top shifts by 10% of the cylinder
+         height in the chosen direction → about a 6° lean. Real mesas
+         can lean a few degrees from differential erosion.
+
+      6. **Top slope** — `top_slope_amount` is z-displacement (in
+         meters, NOT a fraction) of the top surface across one radius
+         in the `top_slope_direction`. Positive amount tilts the top
+         so it's higher in the slope_direction side, lower on the
+         opposite side. ~0.5-1.5m gives a visibly-oblique mesa top
+         without breaking the mesa silhouette.
+
+      7. **Top relief** — `top_relief_components` is a list of
+         `(n_theta, amp, phase)` triples that add cosine bumps to the
+         top z-coordinate (in meters). 1-3 components with `amp` ~0.3-
+         0.8 m gives subtle top variation — not perfectly flat,
+         not lumpy.
+
+    All "slight" knobs default to 0 so a no-arg call gives a perfect
+    cylinder; turn them on selectively for the natural-mesa look.
+    """
+    c = np.asarray(center, dtype=np.float32)
+    half_h = height * 0.5
+    sx, sy = float(radial_shift[0]), float(radial_shift[1])
+    horiz = list(horizontal_components)
+    fluting = list(fluting_components)
+    top_relief = list(top_relief_components)
+    flare_h_world = max(flare_height_frac * height, 1e-3)
+    base_flare_world = base_flare * radius
+    # Tilt as world-meter displacement of the TOP relative to the bottom.
+    tilt_dx = column_tilt_amount * height * float(np.cos(column_tilt_direction))
+    tilt_dy = column_tilt_amount * height * float(np.sin(column_tilt_direction))
+    slope_cos_dir = float(np.cos(top_slope_direction))
+    slope_sin_dir = float(np.sin(top_slope_direction))
+
+    def f(p: np.ndarray) -> np.ndarray:
+        d = p - c
+        # Apply column tilt by SHEARING — at z=-half_h (bottom), no shift;
+        # at z=+half_h (top), shift by (tilt_dx, tilt_dy). Linear in z.
+        if column_tilt_amount != 0.0:
+            z_norm_full = (d[..., 2] + half_h) / max(height, 1e-3)
+            x = d[..., 0] - sx - tilt_dx * z_norm_full
+            y = d[..., 1] - sy - tilt_dy * z_norm_full
+        else:
+            x = d[..., 0] - sx
+            y = d[..., 1] - sy
+        z = d[..., 2]
+        angle = np.arctan2(y, x)
+        r_local = np.sqrt(x * x + y * y)
+        r_target = np.full_like(r_local, radius)
+
+        # 1. Horizontal harmonics → asymmetric outline.
+        for n, amp, phase in horiz:
+            r_target = r_target + amp * np.cos(n * angle + phase)
+
+        # 2. Vertical fluting — perturbation in (theta, z).
+        if fluting:
+            z_norm = (z + half_h) / max(height, 1e-3)
+            for n_t, n_z, amp, phase_t, phase_z in fluting:
+                r_target = r_target + amp * (
+                    np.cos(n_t * angle + phase_t)
+                    * np.cos(n_z * z_norm * 2.0 * np.pi + phase_z)
+                )
+
+        # 3. Talus skirt — base flare.
+        if base_flare_world > 0:
+            h_above = z + half_h
+            flare_t = np.clip(1.0 - h_above / flare_h_world, 0.0, 1.0)
+            flare_t = flare_t * flare_t * (3.0 - 2.0 * flare_t)
+            r_target = r_target + base_flare_world * flare_t
+
+        # 4. Top taper.
+        if top_taper > 0:
+            h_above = z + half_h
+            taper_t = np.clip(h_above / max(height, 1e-3), 0.0, 1.0)
+            taper_t = taper_t * taper_t * (3.0 - 2.0 * taper_t)
+            r_target = r_target - top_taper * radius * taper_t
+
+        # Compute the per-(x,y) top z based on top_slope + top_relief.
+        # `top_z` is the z-coordinate where the cylinder ends.
+        top_z = np.full_like(z, half_h)
+        if top_slope_amount != 0.0:
+            # Linear plane tilt across the radius — `top_slope_amount` is
+            # the meters of z-rise per `radius` of horizontal displacement
+            # in `top_slope_direction`. (x*cos+y*sin)/radius gives the
+            # signed normalized projection onto the slope direction.
+            top_z = top_z + top_slope_amount * (
+                (x * slope_cos_dir + y * slope_sin_dir) / max(radius, 1e-3)
+            )
+        if top_relief:
+            for n, amp, phase in top_relief:
+                top_z = top_z + amp * np.cos(n * angle + phase)
+
+        radial = r_local - r_target
+        # Vertical outside-distance: above top_z, or below -half_h.
+        above = z - top_z
+        below = -half_h - z
+        vertical = np.maximum(above, below)
+        outside = np.linalg.norm(
+            np.stack([np.maximum(radial, 0.0), np.maximum(vertical, 0.0)], axis=-1),
+            axis=-1,
+        )
+        inside = np.minimum(np.maximum(radial, vertical), 0.0)
+        return outside + inside
+
+    return f
+
+
 def cylinder_organic(
     radius: float,
     height: float,
@@ -245,6 +395,54 @@ def line_xy(
 # ---------------------------------------------------------------------------
 # Procedural noise — used to displace ground heights
 # ---------------------------------------------------------------------------
+
+
+def low_freq_noise_2d(
+    seed: int = 0,
+    feature_scale: float = 30.0,
+    amplitude: float = 1.0,
+    grid_size: int = 8,
+) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+    """A genuinely-low-frequency 2D smooth-noise sampler.
+
+    Samples random values on an `grid_size` × `grid_size` lattice that
+    covers a `feature_scale × feature_scale` tile. Bilinear-interpolates
+    with quintic smoothstep between cells. Tiles repeat outside the
+    initial extent.
+
+    Distinct from `perlin_2d`, which samples a 64×64 grid regardless of
+    period — perlin_2d has high-frequency content even with large
+    periods, which produces spiky/jagged threshold contours when used
+    for mesa-zone selection. This function ties feature size directly
+    to lattice spacing (feature_scale / grid_size), so the output is
+    smooth at the requested scale and nothing finer.
+
+    Use for: large-feature zone masks (mesa locations, biome
+    boundaries). Use perlin_2d for: per-vertex texture noise.
+    """
+    rng = np.random.default_rng(seed)
+    grid = rng.random((grid_size, grid_size), dtype=np.float32) * 2.0 - 1.0
+
+    def h(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        u = (x / feature_scale) % 1.0 * (grid_size - 1)
+        v = (y / feature_scale) % 1.0 * (grid_size - 1)
+        i = u.astype(np.int32)
+        j = v.astype(np.int32)
+        i1 = (i + 1) % grid_size
+        j1 = (j + 1) % grid_size
+        fu = u - i
+        fv = v - j
+        sfu = fu * fu * fu * (fu * (fu * 6 - 15) + 10)
+        sfv = fv * fv * fv * (fv * (fv * 6 - 15) + 10)
+        v00 = grid[j, i]
+        v10 = grid[j, i1]
+        v01 = grid[j1, i]
+        v11 = grid[j1, i1]
+        a = v00 * (1 - sfu) + v10 * sfu
+        b = v01 * (1 - sfu) + v11 * sfu
+        return amplitude * (a * (1 - sfv) + b * sfv)
+
+    return h
 
 
 def perlin_2d(
