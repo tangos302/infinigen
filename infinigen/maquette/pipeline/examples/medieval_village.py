@@ -30,6 +30,7 @@ from infinigen.maquette.factories.native.fence import LowPolyFenceFactory
 from infinigen.maquette.factories.native.lantern_post import LowPolyLanternPostFactory
 from infinigen.maquette.factories.native.tree import NativeLowPolyTreeFactory
 from infinigen.maquette.factories.native.water_surface import LowPolyWaterSurfaceFactory
+from infinigen.maquette.runtime.checkpoint import checkpoint
 
 
 rng = random.Random(424242)
@@ -52,6 +53,8 @@ bsdf.inputs["Base Color"].default_value = (0.55, 0.58, 0.40, 1.0)
 bsdf.inputs["Roughness"].default_value = 1.0
 ground.data.materials.append(gmat)
 
+checkpoint("terrain")  # ground is in place — frontend hot-swaps OBJ
+
 # 2. Stream cuts west-east through the scene
 stream = LowPolyWaterSurfaceFactory(
     factory_seed=4242, water_archetype="stream", length=40, width=2.4,
@@ -63,6 +66,8 @@ lake = LowPolyWaterSurfaceFactory(
     factory_seed=4243, water_archetype="still_lake", extent=(7, 5),
 ).create_asset(placeholder=None)
 place(lake, 16, 7, 0.005)
+
+checkpoint("water")  # streams + lake — water reads in the viewer
 
 # 3. Houses south of the stream — building cluster pattern
 HOUSES = [
@@ -76,6 +81,8 @@ for seed, arch, x, y, rot in HOUSES:
     f = LowPolyHouseFactory(factory_seed=seed, building_archetype=arch)
     obj = f.create_asset(placeholder=None)
     place(obj, x, y, 0, rot)
+
+checkpoint("structures")  # village houses pop in
 
 # 4. Forest ring (varied tree archetypes for visual variety)
 TREES = [
@@ -99,6 +106,8 @@ for i in range(22):
     s = rng.uniform(0.85, 1.2)
     obj.scale = (s, s, s)
     place(obj, fx, fy)
+
+checkpoint("foliage")  # forest ring around the village
 
 # 5. Fences (4 archetypes for variety)
 def add_fence(seed, archetype, x, y, length, rot_z=0):
@@ -146,6 +155,8 @@ for i in range(10):
     obj = f.spawn_asset(i=700 + i, loc=(bx, by, 0))
     obj.scale = (rng.uniform(0.4, 0.8),) * 3
 
+checkpoint("props")  # fences, lanterns, barrels, crates, riprap — last geometry pass
+
 # 9. Camera + golden-hour sun + warm sky
 bpy.ops.object.camera_add(location=(20, -22, 13))
 cam = bpy.context.active_object
@@ -168,6 +179,8 @@ bg = w.node_tree.nodes.new("ShaderNodeBackground")
 bg.inputs[0].default_value = (0.86, 0.78, 0.62, 1.0)
 bg.inputs[1].default_value = 1.0
 w.node_tree.links.new(bg.outputs[0], out.inputs[0])
+
+checkpoint("final")  # final geometry — Cycles render is just lighting
 
 # 10. Render + save (paths from MAQUETTE_OUT_DIR)
 OUT_DIR = Path(os.environ["MAQUETTE_OUT_DIR"])

@@ -76,6 +76,19 @@ CRITICAL RULES:
 8. The ground plane material should set `Base Color` directly. Do not
    add image textures, noise nodes, or shader graphs to materials —
    the Maquette aesthetic is solid flat colour per slot.
+
+9. LIVE PROGRESS — call `checkpoint('<phase>')` at each major build
+   boundary so the frontend's 3D viewer can show the scene evolving
+   while the script runs. Required calls (skip any that don't apply):
+     - after ground/terrain is in place:        checkpoint('terrain')
+     - after primary foliage (trees, bushes):    checkpoint('foliage')
+     - after buildings / structures:             checkpoint('structures')
+     - after small props / scatter / fences:     checkpoint('props')
+     - just before render:                       checkpoint('final')
+   Import once near the top of the script:
+     from infinigen.maquette.runtime.checkpoint import checkpoint
+   Each call exports the current scene to map.obj — keep them at
+   coherent visual milestones (don't checkpoint inside a tight loop).
 """
 
 
