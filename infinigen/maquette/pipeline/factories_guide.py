@@ -259,16 +259,26 @@ from infinigen.maquette.factories.boulder import LowPolyBoulderFactory  # wrappe
 from infinigen.maquette.runtime.terrain import make_terrain
 # OR — when the prompt mixes biomes (grass + desert, forest + coast, etc.):
 # from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
+# OR — for SERIOUS terrain (dramatic peaks + river systems + image refs):
+# from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
 
 rng = random.Random(<seed>)
 
-# 1. Wipe scene + create displaced ground via the terrain helper. NEVER
-# build the ground as a bare plane.
-# - SINGLE biome (one ground type): use make_terrain(style=...).
-# - MIXED biomes (e.g. "grassland → sandy beach → archipelago"): use
-#   make_multi_biome_terrain(zones=[...]). Each zone is
-#   (style, center_x, center_y, radius); heights blend smoothly,
-#   colors snap per-face (faceted look matches low-poly aesthetic).
+# 1. Wipe scene + create displaced ground. NEVER build it as a bare plane.
+# Pick the helper that fits the prompt:
+#   make_terrain(style=...)             — flat/rolling/hilly/alpine/dunes,
+#                                         single biome, fast.
+#   make_multi_biome_terrain(zones=...) — mixed biomes side-by-side,
+#                                         simple zone blender (faceted edges).
+#   make_eroded_terrain(peaks=, troughs=) — game-ready quality.
+#                                         Hydraulic erosion (landlab) +
+#                                         continuous biome colors.
+#                                         REQUIRED when the prompt names
+#                                         dramatic terrain (mountain ranges,
+#                                         river valleys, "vast plains with
+#                                         a peak in the distance"), or any
+#                                         time an image reference is provided
+#                                         showing complex relief.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 terrain = make_terrain(
@@ -285,9 +295,33 @@ terrain = make_terrain(
 #           ("rolling", -30,   0, 25),   # grass headland on the west
 #           ("dunes",    20,  -8, 22),   # sandy fringe on the southeast
 #           ("flat",      0,  38, 30),   # ocean side (add water plane on top)
-#           # optional 5th tuple element: explicit (r,g,b) override
 #       ],
 #   )
+# Eroded (game-ready) alternative — peaks + troughs spec:
+#   terrain = make_eroded_terrain(
+#       size=140,                         # bigger world; relief reads at 280 BU wide
+#       seed=<seed>,
+#       peaks=[
+#           # (cx, cy, sigma, height) — Gaussians for mountain masses.
+#           # Heights ≥12 BU get ridged-noise alpine character + snow caps.
+#           (115, 50, 25, 18.0),          # hero alpine NE
+#           (-110, 70, 18, 4.5),          # secondary western range
+#           (-95, -110, 22, 5.0),         # foreground vantage hill (camera vp)
+#       ],
+#       troughs=[
+#           # (cx, cy, sigma, depth NEGATIVE) — chain these to thread a
+#           # winding river/lake basin. Erosion will carve drainage from peaks
+#           # toward the troughs naturally.
+#           (-40, -10, 14, -3.6),
+#           ( 5,   5, 12, -3.4),
+#           ( 30, 20, 14, -3.2),
+#       ],
+#       plain_offset=2.4,                  # lift plains so meadow dominates
+#       sea_level=0.5,                     # below = lakebed/shore
+#       erode_iters=35,                    # 25 soft, 35 default, 60 aggressive
+#   )
+# After this call: `terrain.height_at(x, y)` returns the eroded surface
+# height at any world XY — use it the same way as make_terrain.
 
 # 2. Spawn assets via factories.
 #    Pattern: f = FactoryClass(factory_seed=N, archetype="...")

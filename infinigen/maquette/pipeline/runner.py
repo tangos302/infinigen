@@ -198,6 +198,60 @@ CRITICAL RULES:
     `terrain.height_at(x, y)` works the same as for single-biome:
     placement queries return the blended surface height. Same
     `checkpoint('terrain')` rule.
+
+11c. EROIDED (GAME-READY) TERRAIN. When the prompt or attached image
+    shows DRAMATIC topography — mountain ranges, river valleys
+    threading through plains, "vast lands with a peak in the
+    distance", "fjord coastline", "fantasy overland panorama" — use
+    `make_eroded_terrain` instead of `make_terrain` /
+    `make_multi_biome_terrain`. It runs hydraulic erosion via
+    landlab's FastscapeEroder so ridges and river networks read as
+    real topography (not noise on a plane), and writes per-vertex
+    biome colors that blend continuously between meadow / forest /
+    stone / alpine / snow:
+
+      from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
+
+      terrain = make_eroded_terrain(
+          size=140,
+          seed=<scene seed>,
+          peaks=[
+              # (cx, cy, sigma, height_BU). height >= 12 BU gets
+              # ridged-noise alpine character + snow capping.
+              (115,  50, 25, 18.0),    # hero alpine NE
+              (-110, 70, 18,  4.5),    # smaller western range
+              (-95, -110, 22, 5.0),    # foreground vantage hill
+          ],
+          troughs=[
+              # (cx, cy, sigma, depth_BU NEGATIVE). Chain 4-7 of these
+              # to thread a winding river/lake basin; erosion carves
+              # drainage from peaks toward troughs naturally.
+              (-40, -10, 14, -3.6),
+              ( 5,    5, 12, -3.4),
+              ( 30,  20, 14, -3.2),
+          ],
+          plain_offset=2.4,    # lift plains so meadow dominates
+          sea_level=0.5,       # below this = lakebed/shore color
+          erode_iters=35,
+      )
+
+    Tuning rules:
+      * Image references showing alpine peaks → 1 hero peak height
+        14-22 BU, sigma 22-30, in the framed quadrant (e.g. NE).
+      * Image with rolling plains + a single peak → keep plains
+        smooth (no extra peaks), single peak height 14-18.
+      * For a winding river: chain 5-7 troughs sigma 10-15 along
+        the desired course, depth -3..-4. Don't overlap with peaks.
+      * For "river through valley between mountains": peaks
+        flanking the trough chain on both sides.
+      * Bump `plain_offset` (e.g. 3.0) if the rendered scene reads
+        as too sandy (too much shore band). Reduce (e.g. 1.5) if
+        too much green and not enough exposed riverbed.
+
+    Costs: ~5-10 seconds at the default resolution=256 (heightmap
+    composition + erosion). Mesh + colors are sub-second.
+
+    Always call `checkpoint('terrain')` AFTER the make_eroded_terrain call.
 """
 
 
