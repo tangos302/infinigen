@@ -62,7 +62,12 @@ CRITICAL RULES:
    "instanced" look. Pick a lighting recipe that matches the prompt's
    mood (dawn, midday, golden hour, twilight, wasteland).
 
-5. Keep total object count under ~150 to render in <30s.
+5. Object count caps:
+     - Single-biome / canonical (size=80) scene: ~150 objects.
+     - PANORAMA scene (size >= 120, eroded terrain): up to ~400 objects.
+       Density matters here — a 280 BU wide panorama with only 25 trees
+       reads as empty. Push 100+ trees, 20-30 buildings, 60+ boulders,
+       and scatter them across the whole map (not just a ring).
 
 6. DO NOT add `ShaderNodeVolumeScatter`, `ShaderNodeVolumeAbsorption`,
    any world-volume effects, or fog/mist/haze volumetrics. They render
@@ -265,15 +270,49 @@ CRITICAL RULES:
 12. FACTORY SCALE DISCIPLINE.
 
     a) Factory base sizes are calibrated for a `size=80` world (160 BU
-       wide). When you call `make_eroded_terrain(size=140)` (or any
-       other size > 80), MULTIPLY every prop's `obj.scale` by
-       `size / 80` so trees, houses, fences, etc. don't look like
-       dollhouses next to a 280 BU world.
+       wide) where the camera sits ~30-50 BU from the action. For a
+       PANORAMA scene (size >= 120) the camera sits 150+ BU from the
+       far ridge, so objects need to be MUCH SMALLER to read as
+       "natural" distant scenery instead of dollhouse-sized props
+       crowding the foreground.
 
-         # at size=140 the multiplier is 1.75:
-         WORLD_SCALE = size / 80.0
-         tree.scale = (s * WORLD_SCALE,) * 3
+         # PANORAMA rule (when using make_eroded_terrain with size >= 120):
+         WORLD_SCALE = (size / 80.0) * 0.25     # ~0.44 at size=140
+         # Objects within 25 BU of the camera can use ×2 of WORLD_SCALE
+         # (foreground hero scale). Everything else = WORLD_SCALE.
+
+         tree.scale = (s * WORLD_SCALE,) * 3       # default: distant
+         hero_tree.scale = (s * WORLD_SCALE * 2,) * 3   # camera-adjacent
+
          house.scale = (s * WORLD_SCALE,) * 3
+         castle_keep.scale = (s * WORLD_SCALE * 1.5, ...)   # landmark exception
+
+       For canonical / single-biome / size=80 scenes, keep
+       `WORLD_SCALE = 1.0` (no multiplier).
+
+       Density matters as much as scale. In a panorama, MINIMUMS:
+
+         Trees       :  120-180 (forest patches across plains, never a ring)
+         Boulders    :   60-90  (riprap along water + scattered)
+         Buildings   :   25-35  (1-2 hamlets along the river PLUS the castle)
+         Windmills   :    2-4   (where they exist as a factory)
+         Fences      :   15-25  (property lines on the plains)
+
+       That's ~250+ objects per panorama scene. Within budget at the
+       low polycounts these factories produce. Use seeded RNG loops:
+
+         for i in range(140):
+             fx = rng.uniform(-110, 110)
+             fy = rng.uniform(-110, 110)
+             fz = terrain.height_at(fx, fy)
+             if fz < SEA_LEVEL + 0.4:    # don't drop trees in water
+                 continue
+             # ... build + place tree
+
+       Spread positions across the FULL world, biased away from the
+       castle compound and the water surface. Hand-listing 30
+       positions inevitably looks patterned; the loop with seeded RNG
+       reads as natural scatter.
 
     b) `LowPolyRockSpireFactory` produces 30+ BU tall sandstone
        columns (hoodoo / citadel / mesa archetypes). These are
@@ -318,23 +357,31 @@ CRITICAL RULES:
          that READS as a castle from camera distance, compose it
          from existing factories with this exact recipe:
 
+           # In panorama scenes the castle is a LANDMARK, not the
+           # main subject — keep the silhouette readable but in
+           # natural-distant proportions. Use the LANDMARK_SCALE
+           # below, which is ~1.5× WORLD_SCALE (so it stands above
+           # the mass of trees/houses but doesn't dwarf the alpine
+           # peak behind it).
+           LANDMARK_SCALE = WORLD_SCALE * 1.5
+
            # KEEP — tall central tower
            keep = LowPolyHouseFactory(
                factory_seed=<S>, building_archetype="tower",
            ).create_asset(placeholder=None)
-           keep.scale = (1.1 * WORLD_SCALE, 1.1 * WORLD_SCALE, 1.6 * WORLD_SCALE)
+           keep.scale = (1.1 * LANDMARK_SCALE, 1.1 * LANDMARK_SCALE, 1.6 * LANDMARK_SCALE)
            place(keep, cx, cy)   # cx, cy = castle hill peak
 
-           # 3-4 WATCHTOWERS around the keep, smaller, ringing it
+           # 3-4 WATCHTOWERS around the keep, smaller, ringing it.
+           # Spacing is in WORLD-space BU; scale separately.
            for i, (dx, dy) in enumerate([(4, 0), (-4, 0), (0, 4), (0, -4)]):
                t = LowPolyHouseFactory(
                    factory_seed=<S>+10+i, building_archetype="tower",
                ).create_asset(placeholder=None)
-               t.scale = (0.6 * WORLD_SCALE,) * 3
+               t.scale = (0.6 * LANDMARK_SCALE,) * 3
                place(t, cx + dx, cy + dy)
 
-           # CURTAIN WALLS — stone-wall fence segments forming a
-           # perimeter linking the watchtowers
+           # CURTAIN WALLS — stone-wall fence segments linking watchtowers
            for i, (mx, my, length, rot) in enumerate([
                (cx + 2, cy + 2, 4, math.radians(45)),
                (cx - 2, cy + 2, 4, math.radians(-45)),
@@ -346,14 +393,14 @@ CRITICAL RULES:
                    fence_archetype="stone_wall",
                    length=length,
                ).create_asset(placeholder=None)
-               wall.scale = (1.0, 1.0, 2.0 * WORLD_SCALE)   # tall walls
+               wall.scale = (LANDMARK_SCALE, LANDMARK_SCALE, 2.0 * LANDMARK_SCALE)
                place(wall, mx, my, rot_z=rot)
 
            # GATEHOUSE — a small cottage marking the entrance
            gate = LowPolyHouseFactory(
                factory_seed=<S>+50, building_archetype="cottage",
            ).create_asset(placeholder=None)
-           gate.scale = (0.7 * WORLD_SCALE,) * 3
+           gate.scale = (0.7 * LANDMARK_SCALE,) * 3
            place(gate, cx + 6, cy)
 
          All castle parts live within a ~10 BU radius. Place the
