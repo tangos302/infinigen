@@ -319,9 +319,14 @@ terrain = make_terrain(
 #       plain_offset=2.4,                  # lift plains so meadow dominates
 #       sea_level=0.5,                     # below = lakebed/shore
 #       erode_iters=35,                    # 25 soft, 35 default, 60 aggressive
+#       # water=True is the default — auto-detects connected basins
+#       # below sea_level and drops one translucent blue cube per body.
+#       # Pass water=False to suppress (terrain-only renders).
 #   )
 # After this call: `terrain.height_at(x, y)` returns the eroded surface
 # height at any world XY — use it the same way as make_terrain.
+# DO NOT add LowPolyWaterSurfaceFactory on top of make_eroded_terrain —
+# the helper already places water volumes per basin from the heightmap.
 
 # 2. Spawn assets via factories.
 #    Pattern: f = FactoryClass(factory_seed=N, archetype="...")

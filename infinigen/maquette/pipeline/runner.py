@@ -251,6 +251,15 @@ CRITICAL RULES:
     Costs: ~5-10 seconds at the default resolution=256 (heightmap
     composition + erosion). Mesh + colors are sub-second.
 
+    AUTO WATER: by default `make_eroded_terrain` detects connected
+    basins (cells where elevation < sea_level) and drops one
+    translucent blue cube per basin sized to its bbox — gives the
+    impression of water bodies without any explicit factory call.
+    DO NOT add `LowPolyWaterSurfaceFactory` on top of this helper;
+    it duplicates the water and the explicit factory's flat slab
+    looks wrong layered over the auto cubes. To suppress auto water
+    (terrain-only renders), pass `water=False`.
+
     Always call `checkpoint('terrain')` AFTER the make_eroded_terrain call.
 """
 

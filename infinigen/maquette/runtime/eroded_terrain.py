@@ -296,6 +296,80 @@ def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, Palett
     return np.clip(out, 0, 1)
 
 
+def _place_water_volumes(
+    H,
+    sea_level: float,
+    size: float,
+    water_offset: float,
+    water_color: tuple[float, float, float, float],
+    water_thickness: float,
+    min_area_cells: int,
+):
+    """Detect connected basins where elevation < sea_level and place
+    one thin translucent Blender cube per basin sized to its bounding
+    box. Returns the list of created water objects.
+
+    Connected-component labelling uses ``scipy.ndimage.label``. We
+    drop tiny components (< min_area_cells) so we don't litter the
+    scene with a translucent box for every 1-cell erosion gully.
+    """
+    import bpy
+    import numpy as np
+    from scipy.ndimage import label
+
+    res = H.shape[0]
+    span = 2 * float(size)
+    cell = span / (res - 1)
+
+    submerged = (H < sea_level).astype(np.int32)
+    labels, n_components = label(submerged, structure=np.ones((3, 3), dtype=np.int32))
+
+    # Shared material — created once, reused by every basin's cube.
+    mat = bpy.data.materials.new("water_volume_mat")
+    mat.use_nodes = True
+    mat.blend_method = "BLEND"   # alpha-blend in Eevee viewport
+    nt = mat.node_tree
+    for n in list(nt.nodes):
+        if n.type != "OUTPUT_MATERIAL":
+            nt.nodes.remove(n)
+    out_node = nt.nodes["Material Output"]
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    r, g, b, a = water_color
+    bsdf.inputs["Base Color"].default_value = (r, g, b, 1.0)
+    bsdf.inputs["Roughness"].default_value = 0.15
+    bsdf.inputs["Alpha"].default_value = float(a)
+    nt.links.new(bsdf.outputs["BSDF"], out_node.inputs["Surface"])
+
+    water_z = float(sea_level) + float(water_offset)
+    objs = []
+    for comp_idx in range(1, n_components + 1):
+        ys, xs = np.where(labels == comp_idx)
+        if len(xs) < min_area_cells:
+            continue
+        # World-space bbox from cell indices.
+        x0 = -size + xs.min() * cell
+        x1 = -size + xs.max() * cell
+        y0 = -size + ys.min() * cell
+        y1 = -size + ys.max() * cell
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+        # Pad a bit so the box reaches just past the shoreline cells.
+        sx = max(x1 - x0 + cell * 1.5, cell)
+        sy = max(y1 - y0 + cell * 1.5, cell)
+
+        bpy.ops.mesh.primitive_cube_add(
+            size=1.0,
+            location=(cx, cy, water_z - water_thickness * 0.5),
+        )
+        cube = bpy.context.active_object
+        cube.name = f"Water_{comp_idx:02d}"
+        cube.scale = (sx, sy, water_thickness)
+        cube.data.materials.append(mat)
+        objs.append(cube)
+
+    return objs
+
+
 def make_eroded_terrain(
     *,
     size: float = 140.0,
@@ -308,6 +382,11 @@ def make_eroded_terrain(
     resolution: int = 256,
     palette: dict[str, PaletteRGB] | None = None,
     smooth_shading: bool = True,
+    water: bool = True,
+    water_color: tuple[float, float, float, float] = (0.20, 0.42, 0.60, 0.8),
+    water_offset: float = 0.10,
+    water_thickness: float = 0.4,
+    water_min_area_cells: int = 12,
 ) -> Terrain:
     """Build a hydraulically-eroded terrain mesh.
 
@@ -396,6 +475,26 @@ def make_eroded_terrain(
     bsdf.inputs["Roughness"].default_value = 0.95
     nt.links.new(bsdf.outputs["BSDF"], out_node.inputs["Surface"])
     me.materials.append(mat)
+
+    # Auto-place translucent water volumes in detected basins. One thin
+    # cube per connected component below sea level, simple alpha-blend
+    # material — enough to give the impression of water without faking
+    # full reflective/refractive shaders.
+    if water:
+        try:
+            water_objs = _place_water_volumes(
+                H,
+                sea_level=sea_level,
+                size=size,
+                water_offset=water_offset,
+                water_color=water_color,
+                water_thickness=water_thickness,
+                min_area_cells=water_min_area_cells,
+            )
+            print(f"[eroded_terrain] placed {len(water_objs)} water volume(s)")
+        except Exception as exc:
+            # Non-fatal — the terrain itself is still good without water.
+            print(f"[eroded_terrain] water placement skipped ({type(exc).__name__}: {exc})")
 
     # Closure for height_at — bilinear sample of the eroded grid at world (x, y).
     res_minus = res - 1
