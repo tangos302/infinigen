@@ -310,12 +310,20 @@ script must stand on its own.
 """
 
 
+_CATEGORY_LABELS = {
+    "terrain": "Terrain & Water (ground heightmap, water bodies, vegetation, rocks)",
+    "landmarks": "Landmarks (hero structures: buildings, bridges, windmills, torii)",
+    "objects": "Objects (props, scatter, fences, lanterns, banners, crates)",
+}
+
+
 def build_prompt(
     user_prompt: str,
     *,
     regenerate_guide: bool = True,
     reference_image_paths: list[Path] | None = None,
     debug: bool = False,
+    include_categories: list[str] | None = None,
 ) -> str:
     """Assemble the full prompt: system instructions + factory catalog +
     canonical example + user prompt + optional reference image attachments.
@@ -344,6 +352,33 @@ def build_prompt(
 
     debug_block = _DEBUG_NARRATIVE_INSTRUCTIONS if debug else ""
 
+    # Restrict the build to a subset of factory categories. Used by the
+    # debug "categories" toggle in the workbench when a designer wants
+    # to iterate on just terrain or just landmarks. Always builds the
+    # ground (otherwise the scene has no floor) but skips spawning
+    # factories from any non-included category.
+    category_block = ""
+    valid_cats = {"terrain", "landmarks", "objects"}
+    if include_categories is not None:
+        included = [c for c in include_categories if c in valid_cats]
+        excluded = [c for c in valid_cats if c not in included]
+        if included and excluded:
+            included_lines = "\n".join(f"  - {c}: {_CATEGORY_LABELS[c]}" for c in included)
+            excluded_lines = "\n".join(f"  - {c}" for c in excluded)
+            category_block = (
+                "## CATEGORY RESTRICTION (debug mode)\n\n"
+                "This is a partial-build run. Only spawn factories from the\n"
+                "categories listed under INCLUDE. Skip every category under\n"
+                "EXCLUDE — do not call any factory from those categories,\n"
+                "and do not include them in the SCENE_PLAN's category arrays\n"
+                "(use [] for excluded ones).\n\n"
+                f"INCLUDE:\n{included_lines}\n\n"
+                f"EXCLUDE:\n{excluded_lines}\n\n"
+                "Always still build the ground via make_terrain — the scene\n"
+                "needs a floor even if other categories are skipped.\n"
+                "Camera + sun + world background are always required.\n\n"
+            )
+
     return (
         f"{_SYSTEM_PROMPT}\n\n"
         f"## Factory catalog\n\n{guide}\n\n"
@@ -354,6 +389,7 @@ def build_prompt(
         f"```python\n{example}\n```\n\n"
         f"{image_block}"
         f"{debug_block}"
+        f"{category_block}"
         f"## YOUR TASK\n\n"
         f"User prompt: {user_prompt.strip() or '(blank — let the reference image(s) drive the build)'}\n\n"
         f"Generate the build script."
@@ -484,13 +520,15 @@ def generate(user_prompt: str, *, model: str | None = None,
              timeout_seconds: int = 300,
              regenerate_guide: bool = True,
              reference_image_paths: list[Path] | None = None,
-             debug: bool = False) -> GenerationResult:
+             debug: bool = False,
+             include_categories: list[str] | None = None) -> GenerationResult:
     """End-to-end: prompt → Claude → extracted script."""
     full_prompt = build_prompt(
         user_prompt,
         regenerate_guide=regenerate_guide,
         reference_image_paths=reference_image_paths,
         debug=debug,
+        include_categories=include_categories,
     )
     response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
     script = extract_script(response)
