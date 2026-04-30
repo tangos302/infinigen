@@ -99,6 +99,46 @@ CRITICAL RULES:
     The title must be 2-6 words, capitalised like a postcard ("Alpine
     Watchtower at Dusk", "Marketplace Under Banners"). It names the run
     in the history sidebar. NO trailing punctuation. NO scare quotes.
+
+11. GROUND IS NEVER A BARE PLANE. Use the runtime terrain helper to
+    build the ground mesh from a noise field; you also get a height
+    sampler so placed objects rest on the surface instead of floating
+    or clipping through. Required even for "flat" scenes (style="flat"
+    explicitly returns z=0 everywhere — choose it deliberately).
+
+      from infinigen.maquette.runtime.terrain import make_terrain
+
+      terrain = make_terrain(
+          style="rolling",       # see options below
+          size=50,                # half-width in BU; world is -size..+size
+          base_color=(0.42, 0.50, 0.30, 1.0),
+          seed=<scene seed>,      # match the rng seed for reproducibility
+      )
+      # Place objects on the surface:
+      obj.location = (x, y, terrain.height_at(x, y))
+
+    Style presets — pick by mood, not by guess:
+      flat      courtyards, plazas, market squares, ship decks
+      rolling   pastoral / valley / "rolling green hills"
+      hilly     foothills, woodland clearings, broken country
+      alpine    mountains, dramatic peaks, fantasy panoramas
+      dunes     sandy waves, desert ripples
+
+    For "alpine" scenes, do NOT also use LowPolyRockSpireFactory in
+    the centre — the terrain already gives elevation. Use spires only
+    as accent foreground/midground silhouettes. For water-bound scenes
+    pick "rolling" or "flat" so the water surface doesn't poke through
+    a peak.
+
+    The water surface factory expects z≈0 — place lakes/rivers in a
+    *valley* by sampling height_at at the lake centre and offsetting:
+
+      cx, cy = 4, 8
+      lake_z = terrain.height_at(cx, cy) - 0.4
+      lake = LowPolyWaterSurfaceFactory(...).create_asset(placeholder=None)
+      lake.location = (cx, cy, lake_z)
+
+    Always call `checkpoint('terrain')` AFTER the make_terrain call.
 """
 
 

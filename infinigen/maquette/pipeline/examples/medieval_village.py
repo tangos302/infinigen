@@ -31,41 +31,53 @@ from infinigen.maquette.factories.native.lantern_post import LowPolyLanternPostF
 from infinigen.maquette.factories.native.tree import NativeLowPolyTreeFactory
 from infinigen.maquette.factories.native.water_surface import LowPolyWaterSurfaceFactory
 from infinigen.maquette.runtime.checkpoint import checkpoint
+from infinigen.maquette.runtime.terrain import make_terrain
 
 
 rng = random.Random(424242)
 
 
-def place(obj, x, y, z=0, rot_z=0):
+def place(obj, x, y, z=None, rot_z=0):
+    """Default z=None means "let the terrain decide" — sample the
+    surface at (x, y). Pass an explicit z for water surfaces (sit
+    them slightly below terrain) or for objects that should float."""
+    if z is None:
+        z = terrain.height_at(x, y)
     obj.location = (x, y, z)
     obj.rotation_euler.z = rot_z
 
 
-# 1. Wipe + ground (grass green)
+# 1. Wipe + ground — `rolling` for a pastoral village by a stream.
+# The terrain helper returns the ground object AND a height sampler;
+# every place() below uses `terrain.height_at(x, y)` so objects sit on
+# the actual surface instead of clipping into hills.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
-bpy.ops.mesh.primitive_plane_add(size=80, location=(0, 0, -0.01))
-ground = bpy.context.active_object
-gmat = bpy.data.materials.new("ground_mat")
-gmat.use_nodes = True
-bsdf = gmat.node_tree.nodes.get("Principled BSDF")
-bsdf.inputs["Base Color"].default_value = (0.55, 0.58, 0.40, 1.0)
-bsdf.inputs["Roughness"].default_value = 1.0
-ground.data.materials.append(gmat)
+terrain = make_terrain(
+    style="rolling",          # pastoral hills; pick alpine/hilly/dunes/flat per-prompt
+    size=40,                  # world is -40..+40 BU on each axis
+    base_color=(0.55, 0.58, 0.40, 1.0),
+    seed=424242,
+)
 
 checkpoint("terrain")  # ground is in place — frontend hot-swaps OBJ
 
-# 2. Stream cuts west-east through the scene
+# 2. Stream cuts west-east through the scene. Place water at a slight
+# offset below the local terrain height so it sits in a valley channel.
+stream_y = 5
+stream_z = terrain.height_at(0, stream_y) - 0.3
 stream = LowPolyWaterSurfaceFactory(
     factory_seed=4242, water_archetype="stream", length=40, width=2.4,
 ).create_asset(placeholder=None)
-place(stream, 0, 5, 0.005, math.radians(8))
+place(stream, 0, stream_y, stream_z, math.radians(8))
 
 # Lake bulge at the east end
+lake_x, lake_y = 16, 7
+lake_z = terrain.height_at(lake_x, lake_y) - 0.3
 lake = LowPolyWaterSurfaceFactory(
     factory_seed=4243, water_archetype="still_lake", extent=(7, 5),
 ).create_asset(placeholder=None)
-place(lake, 16, 7, 0.005)
+place(lake, lake_x, lake_y, lake_z)
 
 checkpoint("water")  # streams + lake — water reads in the viewer
 
@@ -80,7 +92,7 @@ HOUSES = [
 for seed, arch, x, y, rot in HOUSES:
     f = LowPolyHouseFactory(factory_seed=seed, building_archetype=arch)
     obj = f.create_asset(placeholder=None)
-    place(obj, x, y, 0, rot)
+    place(obj, x, y, rot_z=rot)  # z defaults to terrain.height_at(x, y)
 
 checkpoint("structures")  # village houses pop in
 
@@ -113,7 +125,7 @@ checkpoint("foliage")  # forest ring around the village
 def add_fence(seed, archetype, x, y, length, rot_z=0):
     f = LowPolyFenceFactory(factory_seed=seed, fence_archetype=archetype, length=length)
     obj = f.create_asset(placeholder=None)
-    place(obj, x, y, 0, rot_z)
+    place(obj, x, y, rot_z=rot_z)  # ride the terrain surface
 
 add_fence(401, "picket", x=-9, y=-1, length=4.5, rot_z=0)
 add_fence(402, "post_and_rail", x=10, y=-6, length=5.5, rot_z=math.radians(90))
