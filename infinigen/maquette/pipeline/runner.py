@@ -261,6 +261,52 @@ CRITICAL RULES:
     (terrain-only renders), pass `water=False`.
 
     Always call `checkpoint('terrain')` AFTER the make_eroded_terrain call.
+
+12. FACTORY SCALE DISCIPLINE.
+
+    a) Factory base sizes are calibrated for a `size=80` world (160 BU
+       wide). When you call `make_eroded_terrain(size=140)` (or any
+       other size > 80), MULTIPLY every prop's `obj.scale` by
+       `size / 80` so trees, houses, fences, etc. don't look like
+       dollhouses next to a 280 BU world.
+
+         # at size=140 the multiplier is 1.75:
+         WORLD_SCALE = size / 80.0
+         tree.scale = (s * WORLD_SCALE,) * 3
+         house.scale = (s * WORLD_SCALE,) * 3
+
+    b) `LowPolyRockSpireFactory` produces 30+ BU tall sandstone
+       columns (hoodoo / citadel / mesa archetypes). These are
+       LANDMARK-scale, not scatter. Use AT MOST 1-2 spires per
+       scene as hero silhouettes, never as "scattered outcrops".
+       For scattered rocky outcrops use `LowPolyBoulderFactory` at
+       scale 0.4-0.8 — those read as natural boulders.
+
+    c) `LowPolyTombstoneFactory` is GRAVEYARD furniture. Do NOT
+       scale it up to fake "ancient ruins" — the geometry still
+       reads as gravestones from any distance. For fantasy ruins,
+       use `LowPolyHouseFactory("tower")` at 0.5-0.8 scale, rotated
+       slightly off-axis (rot_z = math.radians(rng.uniform(-15, 15)))
+       and clustered 2-3 deep.
+
+13. SKY / WORLD BACKGROUND COLOUR — picking the right preset.
+
+    The Background node's color is the WHOLE sky for distant pixels.
+    A flat warm tan (like 0.86, 0.78, 0.62) reads as DESERT DUST,
+    not golden hour. Use these calibrated values per mood:
+
+       Daytime clear         (0.62, 0.74, 0.88, 1.0)
+       Golden hour (warm)    (0.78, 0.74, 0.72, 1.0)   # subtle warm-grey blue, NOT peach
+       Overcast              (0.74, 0.76, 0.78, 1.0)
+       Twilight              (0.42, 0.46, 0.58, 1.0)
+       Stormy                (0.46, 0.48, 0.52, 1.0)
+       Wasteland / dust      (0.78, 0.70, 0.55, 1.0)   # ONLY for desert/post-apoc
+       Fantasy ethereal      (0.74, 0.78, 0.82, 1.0)
+
+    NEVER pick a tan/peach colour just because the prompt says
+    "warm" or "golden". Warmth comes from the SUN colour
+    (rgb 1.0, 0.86, 0.65) hitting blue-grey sky-lit ground —
+    not from painting the sky orange.
 """
 
 
