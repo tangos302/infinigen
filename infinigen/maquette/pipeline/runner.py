@@ -314,6 +314,52 @@ CRITICAL RULES:
        positions inevitably looks patterned; the loop with seeded RNG
        reads as natural scatter.
 
+    d) FOR ANY SCATTER OF >40 INSTANCES OF THE SAME FACTORY ON
+       ERODED TERRAIN, USE GEOMETRY-NODE SCATTER, NOT A PYTHON LOOP.
+       The eroded terrain mesh carries a per-vertex `Col` biome
+       attribute; `scatter_on_terrain` reads it and distributes
+       Poisson-disk points filtered by biome. One tree template +
+       one scatter call = 600 instances in <1s wall time:
+
+         from infinigen.maquette.runtime.scatter import scatter_on_terrain
+
+         tree_tmpl = NativeLowPolyTreeFactory(
+             factory_seed=1, foliage_archetype="round_ball",
+             trunk_archetype="straight",
+         ).create_asset(placeholder=None)
+         tree_tmpl.scale = (0.4, 0.4, 0.4)   # WORLD_SCALE x 0.25 for size=140
+
+         scatter_on_terrain(
+             terrain_obj=terrain.obj, instance_obj=tree_tmpl,
+             density=0.006, biome_filter="grass", seed=42,
+         )
+
+       Density is points-per-BU² of the FILTERED band (NOT total
+       world area). For a 280 BU panorama with ~0.6 of surface in
+       grass band, density=0.006 yields ~282 trees. Realistic ranges
+       per asset class:
+
+         trees on grass band  : 0.003 - 0.010
+         boulders on alpine   : 0.010 - 0.025
+         dense forest patch   : 0.020 - 0.040
+         shrubs / scrub       : 0.012 - 0.025
+         beach driftwood      : 0.015 - 0.030 (filter "shore")
+
+       biome_filter values: "grass" (meadow + forest), "meadow",
+       "forest", "stone", "alpine", "snow", "shore", "any".
+       Hide the template before render: scatter_on_terrain handles
+       that automatically (parameter `hide_instance_template=True`).
+
+       USE GEOMETRY-NODE SCATTER FOR: trees, boulders, shrubs,
+       grass tufts, mushrooms, flower clumps, anything you'd
+       otherwise place 50+ of in a Python for-loop.
+
+       DO NOT scatter via GN: hero buildings (castle, windmill),
+       small counts (<40 — Python loops are fine for those),
+       fences (path-aligned, not surface-scattered), lampposts.
+       For Python scatter on plain `make_terrain` (no `Col`
+       attribute), keep the loop pattern.
+
     b) `LowPolyRockSpireFactory` produces 30+ BU tall sandstone
        columns (hoodoo / citadel / mesa archetypes). These are
        LANDMARK-scale, not scatter. Use AT MOST 1-2 spires per

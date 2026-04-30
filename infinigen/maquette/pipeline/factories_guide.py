@@ -328,6 +328,43 @@ terrain = make_terrain(
 # DO NOT add LowPolyWaterSurfaceFactory on top of make_eroded_terrain —
 # the helper already places water volumes per basin from the heightmap.
 
+# 1b. Scatter foliage / boulders / grass on the terrain via Geometry Nodes.
+#     This is BIOME-AWARE — pass a single template, the helper instances
+#     it across all faces matching the biome filter.
+# from infinigen.maquette.runtime.scatter import scatter_on_terrain
+#
+# tree_tmpl = NativeLowPolyTreeFactory(factory_seed=1, foliage_archetype="round_ball",
+#                                      trunk_archetype="straight").create_asset(placeholder=None)
+# tree_tmpl.scale = (0.4, 0.4, 0.4)        # WORLD_SCALE × 0.25 for size=140
+# scatter_on_terrain(
+#     terrain_obj=terrain.obj,
+#     instance_obj=tree_tmpl,
+#     density=0.006,                          # ~600 trees over a 280 BU world's grass band
+#     biome_filter="grass",                   # see _BIOME_TESTS in scatter.py
+#     seed=42,
+# )
+# # Boulders on the alpine bands — sparser, slightly larger jitter.
+# boulder_tmpl = LowPolyBoulderFactory(factory_seed=2, palette_color="rock_warm").spawn_asset(
+#     i=2, loc=(0, 0, 0))
+# boulder_tmpl.scale = (0.5, 0.5, 0.5)
+# scatter_on_terrain(
+#     terrain_obj=terrain.obj, instance_obj=boulder_tmpl,
+#     density=0.015, biome_filter="alpine", seed=43,
+# )
+#
+# Biome filters: "grass" (forest+meadow), "meadow", "forest", "stone",
+# "alpine", "snow", "shore", "any". Filters key off the per-vertex `Col`
+# attribute that make_eroded_terrain writes — they don't work on plain
+# make_terrain output.
+#
+# Density is points per BU² of eligible surface (the band selected by
+# biome_filter). Realistic ranges:
+#   trees on grass     : 0.003 - 0.010
+#   boulders on alpine : 0.010 - 0.025
+#   dense forest patch : 0.020 - 0.040
+# Density × area > 5000 produces enough geometry to slow Cycles AND
+# blow up the OBJ file size — keep it bounded.
+
 # 2. Spawn assets via factories.
 #    Pattern: f = FactoryClass(factory_seed=N, archetype="...")
 #             obj = f.create_asset(placeholder=None)
