@@ -31,6 +31,7 @@ class GenerationResult:
     extracted_script: str      # the Python script we'll run
     requested_assets: list[str]  # `# REQUESTED_ASSET: ...` lines
     debug_narrative: str | None = None  # extracted ## DEBUG_NARRATIVE block
+    scene_title: str | None = None  # short human-readable title
 
 
 _SYSTEM_PROMPT = """\
@@ -90,6 +91,13 @@ CRITICAL RULES:
      from infinigen.maquette.runtime.checkpoint import checkpoint
    Each call exports the current scene to map.obj — keep them at
    coherent visual milestones (don't checkpoint inside a tight loop).
+
+10. SCENE TITLE — at the very top of your response (before any other
+    section), output exactly one line:
+      `## SCENE_TITLE: <short title>`
+    The title must be 2-6 words, capitalised like a postcard ("Alpine
+    Watchtower at Dusk", "Marketplace Under Banners"). It names the run
+    in the history sidebar. NO trailing punctuation. NO scare quotes.
 """
 
 
@@ -290,6 +298,24 @@ def extract_requested_assets(script: str) -> list[str]:
     return [m.group("rest").strip() for m in _REQUESTED_LINE.finditer(script)]
 
 
+_SCENE_TITLE_RE = re.compile(
+    r"^##\s*SCENE_TITLE\s*:\s*(?P<title>.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def extract_scene_title(response: str) -> str | None:
+    """Pull the `## SCENE_TITLE: <...>` line from Claude's response.
+    Returns None if no such line exists, the title (trimmed, no
+    trailing punctuation, capped at 80 chars) otherwise."""
+    match = _SCENE_TITLE_RE.search(response)
+    if not match:
+        return None
+    raw = match.group("title").strip().strip('"\'')
+    raw = raw.rstrip(".!?,;:")
+    return raw[:80] or None
+
+
 def extract_debug_narrative(response: str) -> str | None:
     """Extract the `## DEBUG_NARRATIVE` section from Claude's response.
     Returns None if no such section exists. The section ends at the next
@@ -348,9 +374,11 @@ def generate(user_prompt: str, *, model: str | None = None,
     script = extract_script(response)
     requested = extract_requested_assets(script)
     narrative = extract_debug_narrative(response) if debug else None
+    title = extract_scene_title(response)
     return GenerationResult(
         raw_response=response,
         extracted_script=script,
         requested_assets=requested,
         debug_narrative=narrative,
+        scene_title=title,
     )
