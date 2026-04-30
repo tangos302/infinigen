@@ -165,6 +165,39 @@ CRITICAL RULES:
       lake.location = (cx, cy, lake_z)
 
     Always call `checkpoint('terrain')` AFTER the make_terrain call.
+
+11b. MULTI-BIOME TERRAIN. When the prompt mixes ground types — e.g.
+    "grassland headland giving way to sandy beach and an ocean
+    archipelago", "valley between snowy peaks and a desert plateau",
+    "forested foothills bordering a marsh" — use
+    `make_multi_biome_terrain` instead of `make_terrain`. Heights
+    blend smoothly between zones; colors snap per-face by dominant
+    zone (matches the faceted low-poly style):
+
+      from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
+
+      terrain = make_multi_biome_terrain(
+          size=80,
+          seed=<scene seed>,
+          zones=[
+              # (style, center_x, center_y, radius)
+              ("rolling", -30,   0, 25),   # grass headland
+              ("dunes",    20,  -8, 22),   # sandy fringe
+              ("flat",      0,  38, 30),   # ocean — water plane on top
+              # optional 5th tuple element: (r, g, b) explicit color
+          ],
+      )
+
+    Each zone uses the same style presets as `make_terrain`. Default
+    colors per style: rolling=grass green, hilly=meadow green,
+    alpine=rocky grey, dunes=sandy beige, flat=neutral mossy. Pick 2-4
+    zones — too many produces a confused blend. For ocean-dominant
+    scenes use style="flat" for the water region (the water surface
+    factory adds the visible water plane on top).
+
+    `terrain.height_at(x, y)` works the same as for single-biome:
+    placement queries return the blended surface height. Same
+    `checkpoint('terrain')` rule.
 """
 
 

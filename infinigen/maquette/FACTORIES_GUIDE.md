@@ -22,28 +22,35 @@ from mathutils import Vector
 from infinigen.maquette.factories.native.<module> import LowPoly<X>Factory
 # ... repeat for each factory you need
 from infinigen.maquette.factories.boulder import LowPolyBoulderFactory  # wrapper
+from infinigen.maquette.runtime.terrain import make_terrain
 
 rng = random.Random(<seed>)
 
-# 1. Wipe scene + create ground plane
+# 1. Wipe scene + create displaced ground via the terrain helper. NEVER
+# build the ground as a bare plane — pick a style preset that matches
+# the prompt's mood (flat / rolling / hilly / alpine / dunes). The helper
+# returns a height sampler used when placing every other object.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
-bpy.ops.mesh.primitive_plane_add(size=80, location=(0, 0, -0.01))
-g = bpy.context.active_object
-gmat = bpy.data.materials.new("ground_mat")
-gmat.use_nodes = True
-bsdf = gmat.node_tree.nodes.get("Principled BSDF")
-bsdf.inputs["Base Color"].default_value = (<R>, <G>, <B>, 1.0)
-bsdf.inputs["Roughness"].default_value = 1.0
-g.data.materials.append(gmat)
+terrain = make_terrain(
+    style="<flat|rolling|hilly|alpine|dunes>",
+    size=40,                                # half-width in BU
+    base_color=(<R>, <G>, <B>, 1.0),
+    seed=<scene seed>,
+)
 
 # 2. Spawn assets via factories.
 #    Pattern: f = FactoryClass(factory_seed=N, archetype="...")
 #             obj = f.create_asset(placeholder=None)
-#             obj.location = (x, y, z); obj.rotation_euler.z = rot_z
+#             obj.location = (x, y, terrain.height_at(x, y))   # ride the surface
+#             obj.rotation_euler.z = rot_z
 #
 #    LowPolyBoulderFactory needs spawn_asset (Infinigen wrapper):
-#             obj = f.spawn_asset(i=N, loc=(x, y, 0))
+#             obj = f.spawn_asset(i=N, loc=(x, y, terrain.height_at(x, y)))
+#
+#    For water surfaces, sit them slightly below local terrain height
+#    so they read as a valley channel:
+#             lake_z = terrain.height_at(cx, cy) - 0.3
 
 # 3. Camera + sun + world background
 bpy.ops.object.camera_add(location=(<X>, <Y>, <Z>))

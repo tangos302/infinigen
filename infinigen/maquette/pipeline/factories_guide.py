@@ -257,13 +257,18 @@ from infinigen.maquette.factories.native.<module> import LowPoly<X>Factory
 # ... repeat for each factory you need
 from infinigen.maquette.factories.boulder import LowPolyBoulderFactory  # wrapper
 from infinigen.maquette.runtime.terrain import make_terrain
+# OR — when the prompt mixes biomes (grass + desert, forest + coast, etc.):
+# from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
 
 rng = random.Random(<seed>)
 
 # 1. Wipe scene + create displaced ground via the terrain helper. NEVER
-# build the ground as a bare plane — pick a style preset that matches
-# the prompt's mood (flat / rolling / hilly / alpine / dunes). The helper
-# returns a height sampler used when placing every other object.
+# build the ground as a bare plane.
+# - SINGLE biome (one ground type): use make_terrain(style=...).
+# - MIXED biomes (e.g. "grassland → sandy beach → archipelago"): use
+#   make_multi_biome_terrain(zones=[...]). Each zone is
+#   (style, center_x, center_y, radius); heights blend smoothly,
+#   colors snap per-face (faceted look matches low-poly aesthetic).
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 terrain = make_terrain(
@@ -272,6 +277,17 @@ terrain = make_terrain(
     base_color=(<R>, <G>, <B>, 1.0),
     seed=<scene seed>,
 )
+# Multi-biome alternative (replace the single-biome call above when needed):
+#   terrain = make_multi_biome_terrain(
+#       size=80,
+#       seed=<seed>,
+#       zones=[
+#           ("rolling", -30,   0, 25),   # grass headland on the west
+#           ("dunes",    20,  -8, 22),   # sandy fringe on the southeast
+#           ("flat",      0,  38, 30),   # ocean side (add water plane on top)
+#           # optional 5th tuple element: explicit (r,g,b) override
+#       ],
+#   )
 
 # 2. Spawn assets via factories.
 #    Pattern: f = FactoryClass(factory_seed=N, archetype="...")
