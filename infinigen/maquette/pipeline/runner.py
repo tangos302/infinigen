@@ -32,6 +32,7 @@ class GenerationResult:
     requested_assets: list[str]  # `# REQUESTED_ASSET: ...` lines
     debug_narrative: str | None = None  # extracted ## DEBUG_NARRATIVE block
     scene_title: str | None = None  # short human-readable title
+    scene_plan: dict | None = None  # extracted ## SCENE_PLAN JSON
 
 
 _SYSTEM_PROMPT = """\
@@ -210,12 +211,62 @@ catalog covered the prompt cleanly."
   for wide scene, 50 for tight prop). One sentence on why this frame
   captures the hero subject from §3.
 
+### 7. Machine-readable plan
+
+After §6, emit a section titled exactly `## SCENE_PLAN` followed by a
+single fenced ```json``` code block containing your plan as structured
+JSON. The debug UI parses this to render categorised factory cards
+with hover popovers. Schema (all fields required unless noted; use
+empty arrays / null for absent ones — never omit keys):
+
+```json
+{
+  "biome_summary": "one sentence — same as the §1 governing sentence",
+  "ground": { "color_hex": "#aabbcc", "palette_key": "ground_grass | ground_sand | water | …" },
+  "water_present": true,
+  "terrain": [
+    { "factory": "LowPolyTreeFactory",
+      "archetypes": [ {"name": "pine", "count": 8}, {"name": "dead", "count": 2} ],
+      "reasoning": "one sentence" }
+  ],
+  "water": [],
+  "landmarks": [
+    { "factory": "LowPolyHouseFactory",
+      "archetypes": [ {"name": "cottage", "count": 1} ],
+      "layout": "centre on rise",
+      "reasoning": "one sentence" }
+  ],
+  "objects": [
+    { "factory": "LowPolyBarrelFactory",
+      "archetypes": [ {"name": "default", "count": 4} ],
+      "cluster": "yard scatter",
+      "reasoning": "one sentence" }
+  ],
+  "missing": [
+    { "kind": "factory" or "archetype",
+      "name": "LowPolyShrineFactory" or "LowPolyHouseFactory:tower",
+      "description": "1-2 sentences",
+      "stand_in": { "factory": "LowPolyHouseFactory", "archetype": "cottage", "tweaks": "scale=0.6" },
+      "reasoning": "one sentence on why this beats other candidates" }
+  ],
+  "lighting": "twilight",
+  "camera": { "position": [20, -22, 13], "target": [0, 0, 1.5], "lens": 35 }
+}
+```
+
+The JSON must parse cleanly — no trailing commas, no comments inside,
+no python-style booleans. Counts are integers. If a section has no
+entries (e.g. a landlocked scene has no water), use `[]`. The factory
+class names MUST exactly match those in the catalog above (exact
+case + LowPoly prefix); archetype `name` strings must come from the
+factory's archetype tuple.
+
 ---
 
-After §6 ends, write the python build script in the usual
+After §7 ends, write the python build script in the usual
 ```python ... ``` fenced block. The script is the source of truth
-for execution — your narrative is for humans only and the script
-must stand on its own.
+for execution — your narrative + plan are for humans only and the
+script must stand on its own.
 """
 
 
@@ -316,6 +367,37 @@ def extract_scene_title(response: str) -> str | None:
     return raw[:80] or None
 
 
+_SCENE_PLAN_RE = re.compile(
+    r"^##\s*SCENE_PLAN\s*\n+```(?:json)?\s*\n(?P<body>.*?)\n```",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def extract_scene_plan(response: str) -> dict | None:
+    """Pull the `## SCENE_PLAN` JSON block from the response and parse
+    it. Returns None on any failure — extraction is best-effort and
+    must never block the build script execution path.
+
+    Tolerant to:
+      - missing ```json language tag
+      - trailing whitespace / blank lines around the block
+      - the rare model that puts the SCENE_PLAN inside the markdown
+        narrative section instead of after it
+    """
+    import json as _json
+    match = _SCENE_PLAN_RE.search(response)
+    if not match:
+        return None
+    body = match.group("body").strip()
+    if not body:
+        return None
+    try:
+        data = _json.loads(body)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def extract_debug_narrative(response: str) -> str | None:
     """Extract the `## DEBUG_NARRATIVE` section from Claude's response.
     Returns None if no such section exists. The section ends at the next
@@ -374,6 +456,7 @@ def generate(user_prompt: str, *, model: str | None = None,
     script = extract_script(response)
     requested = extract_requested_assets(script)
     narrative = extract_debug_narrative(response) if debug else None
+    plan = extract_scene_plan(response) if debug else None
     title = extract_scene_title(response)
     return GenerationResult(
         raw_response=response,
@@ -381,4 +464,5 @@ def generate(user_prompt: str, *, model: str | None = None,
         requested_assets=requested,
         debug_narrative=narrative,
         scene_title=title,
+        scene_plan=plan,
     )
