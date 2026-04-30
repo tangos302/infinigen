@@ -80,6 +80,25 @@ CRITICAL RULES:
    add image textures, noise nodes, or shader graphs to materials —
    the Maquette aesthetic is solid flat colour per slot.
 
+   FOLIAGE PALETTE: default tree foliage colour to `foliage_pine` or
+   `foliage_bush`. The vivid keys (`foliage_mint`, `foliage_amber`,
+   `foliage_rose`, `foliage_amethyst`, `foliage_lemon`, `foliage_coral`)
+   are RESERVED for explicitly fantasy / enchanted / magical biomes —
+   using mint trees in a normal forest reads as broken texture in the
+   web viewer.
+
+   FOLIAGE ARCHETYPES: default rotation is `pine_cone / round_ball /
+   umbrella / bush`. The `crystal` archetype is faceted and reads as
+   broken geometry against natural trees — use it ONLY for crystal
+   forests or explicitly magical scenery.
+
+   BOULDERS: `LowPolyBoulderFactory` defaults to a Maquette rock
+   palette (rock_warm). You can override with `palette_color="rock_cool"`
+   / `"rock_pale"` / `"rock_shadow"` per scene mood, but NEVER pass
+   `palette_color=None` — the raw Infinigen Mountain shader doesn't
+   round-trip through OBJ export and shows up as a pale grey blob
+   in the viewer.
+
 9. LIVE PROGRESS — call `checkpoint('<phase>')` at each major build
    boundary so the frontend's 3D viewer can show the scene evolving
    while the script runs. Required calls (skip any that don't apply):
@@ -110,10 +129,17 @@ CRITICAL RULES:
 
       terrain = make_terrain(
           style="rolling",       # see options below
-          size=50,                # half-width in BU; world is -size..+size
+          size=80,                # half-width in BU; world is -80..+80 BU
           base_color=(0.42, 0.50, 0.30, 1.0),
           seed=<scene seed>,      # match the rng seed for reproducibility
       )
+
+    Default world size is 80 (i.e. 160 BU on a side). Scale assets and
+    object counts to fill the bigger volume — a forest ring should sit
+    at radius 30-50 BU, scatter clusters reach further, building groups
+    spread out instead of huddling at the origin. Camera position scales
+    too: position (40, -44, 26) targeting (0, 0, 3) frames a size=80
+    world cleanly with lens 35.
       # Place objects on the surface:
       obj.location = (x, y, terrain.height_at(x, y))
 

@@ -268,7 +268,7 @@ for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 terrain = make_terrain(
     style="<flat|rolling|hilly|alpine|dunes>",
-    size=40,                                # half-width in BU
+    size=80,                                # half-width in BU; world 160 BU wide
     base_color=(<R>, <G>, <B>, 1.0),
     seed=<scene seed>,
 )
@@ -384,8 +384,9 @@ missing) and CONTINUE building the scene. Do not refuse to build.
 ### Camera framing
 
 Use `cam.data.lens = 35` for wide scene shots and `lens = 50` for tight
-prop shots. For oblique-aerial scene views the camera at `(20, -22, 13)`
-looking at `(0, 0, 1.5)` is a good default for a 16-30m wide scene.
+prop shots. For an oblique-aerial scene view of a size=80 (160 BU wide)
+world, the camera at `(40, -44, 26)` looking at `(0, 0, 3)` frames the
+full scene cleanly. Scale linearly with terrain size if you change it.
 
 ---
 

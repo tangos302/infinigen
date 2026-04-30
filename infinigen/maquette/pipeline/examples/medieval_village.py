@@ -55,7 +55,7 @@ for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 terrain = make_terrain(
     style="rolling",          # pastoral hills; pick alpine/hilly/dunes/flat per-prompt
-    size=40,                  # world is -40..+40 BU on each axis
+    size=80,                  # world is -80..+80 BU on each axis (160 BU wide)
     base_color=(0.55, 0.58, 0.40, 1.0),
     seed=424242,
 )
@@ -102,8 +102,9 @@ TREES = [
     ("round_ball", "curved"),
     ("umbrella", "straight"),
     ("bush", "curved"),
-    ("crystal", "straight"),
 ]
+# (`"crystal"` is reserved for explicit fantasy/enchanted scenes — its
+# faceted icosphere reads as broken texture against natural foliage.)
 for i in range(22):
     a = i / 22.0 * 2 * math.pi + rng.uniform(-0.1, 0.1)
     r = rng.uniform(15, 19)
@@ -169,10 +170,12 @@ for i in range(10):
 
 checkpoint("props")  # fences, lanterns, barrels, crates, riprap — last geometry pass
 
-# 9. Camera + golden-hour sun + warm sky
-bpy.ops.object.camera_add(location=(20, -22, 13))
+# 9. Camera + golden-hour sun + warm sky.
+# Camera distance scales with the terrain size — for a size=80 world
+# we sit further back so the full scene fits in frame.
+bpy.ops.object.camera_add(location=(40, -44, 26))
 cam = bpy.context.active_object
-target = Vector((0, 0, 1.5))
+target = Vector((0, 0, 3))
 cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
 cam.data.lens = 35
 bpy.context.scene.camera = cam

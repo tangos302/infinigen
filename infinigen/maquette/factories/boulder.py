@@ -57,7 +57,7 @@ class LowPolyBoulderFactory(BoulderFactory):
         target_face_size: float | None = None,
         polygon_multiplier: float = 1.0,
         decimate_ratio: float | None = None,
-        palette_color: str | None = None,
+        palette_color: str | None = "rock_warm",
         **kwargs,
     ):
         super().__init__(factory_seed, **kwargs)
@@ -68,6 +68,12 @@ class LowPolyBoulderFactory(BoulderFactory):
         if decimate_ratio is not None:
             decimate_ratio = float(decimate_ratio)
         self._maquette_decimate_ratio = decimate_ratio
+        # Default to a Maquette rock palette so the OBJ export carries a
+        # proper Kd. Without this fallback the Infinigen Mountain shader
+        # (procedural noise) collapses to a flat 0.8 grey in MTL — the
+        # boulder reads as a pale blob in the Three.js viewer.
+        # Caller can pass palette_color=None to opt out and get the raw
+        # Mountain shader (only useful for in-Blender renders).
         self._maquette_palette_color = palette_color
 
     def create_placeholder(self, boulder_scale: float = 1, **kwargs) -> bpy.types.Object:
