@@ -307,6 +307,68 @@ CRITICAL RULES:
     "warm" or "golden". Warmth comes from the SUN colour
     (rgb 1.0, 0.86, 0.65) hitting blue-grey sky-lit ground —
     not from painting the sky orange.
+
+14. COMPOSITION RECIPES — concrete blueprints for landmarks the
+    factory catalog doesn't have a single archetype for. Follow
+    these literally; they're calibrated against the existing
+    factory base sizes.
+
+    14a. CASTLE / KEEP / FORTRESS.
+         No `LowPolyCastleFactory` exists yet. To get a silhouette
+         that READS as a castle from camera distance, compose it
+         from existing factories with this exact recipe:
+
+           # KEEP — tall central tower
+           keep = LowPolyHouseFactory(
+               factory_seed=<S>, building_archetype="tower",
+           ).create_asset(placeholder=None)
+           keep.scale = (1.1 * WORLD_SCALE, 1.1 * WORLD_SCALE, 1.6 * WORLD_SCALE)
+           place(keep, cx, cy)   # cx, cy = castle hill peak
+
+           # 3-4 WATCHTOWERS around the keep, smaller, ringing it
+           for i, (dx, dy) in enumerate([(4, 0), (-4, 0), (0, 4), (0, -4)]):
+               t = LowPolyHouseFactory(
+                   factory_seed=<S>+10+i, building_archetype="tower",
+               ).create_asset(placeholder=None)
+               t.scale = (0.6 * WORLD_SCALE,) * 3
+               place(t, cx + dx, cy + dy)
+
+           # CURTAIN WALLS — stone-wall fence segments forming a
+           # perimeter linking the watchtowers
+           for i, (mx, my, length, rot) in enumerate([
+               (cx + 2, cy + 2, 4, math.radians(45)),
+               (cx - 2, cy + 2, 4, math.radians(-45)),
+               (cx + 2, cy - 2, 4, math.radians(135)),
+               (cx - 2, cy - 2, 4, math.radians(-135)),
+           ]):
+               wall = LowPolyFenceFactory(
+                   factory_seed=<S>+30+i,
+                   fence_archetype="stone_wall",
+                   length=length,
+               ).create_asset(placeholder=None)
+               wall.scale = (1.0, 1.0, 2.0 * WORLD_SCALE)   # tall walls
+               place(wall, mx, my, rot_z=rot)
+
+           # GATEHOUSE — a small cottage marking the entrance
+           gate = LowPolyHouseFactory(
+               factory_seed=<S>+50, building_archetype="cottage",
+           ).create_asset(placeholder=None)
+           gate.scale = (0.7 * WORLD_SCALE,) * 3
+           place(gate, cx + 6, cy)
+
+         All castle parts live within a ~10 BU radius. Place the
+         CASTLE on a hilltop (use `terrain.height_at(cx, cy)` to
+         pick the high ground) so the silhouette stands above the
+         meadow. ALWAYS emit:
+           # REQUESTED_ASSET: LowPolyCastleFactory — fortress with curtain walls
+         at the top of the script, so the request is logged.
+
+    14b. RUINS / ANCIENT MONUMENTS.
+         Reuse the watchtower piece from 14a — single tall tower
+         scaled 0.4-0.7, rotated 5-15° off vertical
+         (rotation_euler.x or .y, not just z), no walls, no gatehouse.
+         Cluster 2-3 of them within 6 BU and add 4-6 boulders
+         around their base for a "broken stone" look.
 """
 
 
