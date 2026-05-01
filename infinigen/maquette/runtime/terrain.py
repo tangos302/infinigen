@@ -60,6 +60,75 @@ from typing import Callable, Sequence
 # guide imports this for documentation purposes too.
 
 
+# FBM octaves for the simple terrain helper. Tuned for visual variety
+# without going overboard — 4 octaves is enough that hills look like
+# hills and the grazing-angle look at near-camera shows real micro
+# variation. Each tuple is (amp_multiplier, freq_multiplier).
+_FBM_OCTAVES: tuple[tuple[float, float], ...] = (
+    (1.00, 1.0),
+    (0.50, 2.07),
+    (0.25, 4.13),
+    (0.125, 8.31),
+)
+
+
+def _make_height_sampler(amp: float, scale: float, seed: int):
+    """Return a Python callable ``height_at(x, y) → z`` that samples
+    multi-octave noise. Uses opensimplex when available (smoother,
+    fewer artefacts at high freq); falls back to mathutils.noise if
+    opensimplex isn't importable.
+
+    Always adds a sub-meter micro layer so even ``style='flat'`` has
+    grazing-angle texture rather than a glass plane.
+    """
+    seed_offset = float(seed) * 0.001
+
+    try:
+        import sys
+        from pathlib import Path
+        user = Path(
+            f"/home/tang/.local/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+        )
+        if user.is_dir() and str(user) not in sys.path:
+            sys.path.insert(0, str(user))
+        from opensimplex import OpenSimplex
+        # Build per-octave noise instances seeded distinctly so they
+        # don't correlate.
+        nz = [OpenSimplex(seed=seed + 13 * (k + 1)) for k in range(len(_FBM_OCTAVES))]
+        nz_micro = OpenSimplex(seed=seed + 9001)
+
+        def height_at(x: float, y: float) -> float:
+            micro = nz_micro.noise2(x / _MICRO_SCALE, y / _MICRO_SCALE) * _MICRO_AMP
+            if amp <= 0.0:
+                return micro
+            h = 0.0
+            inv = 1.0 / scale
+            for (oct_amp, oct_freq), n in zip(_FBM_OCTAVES, nz):
+                h += oct_amp * n.noise2(x * inv * oct_freq, y * inv * oct_freq)
+            return h * amp + micro
+
+        return height_at
+
+    except Exception:
+        from mathutils import noise as bnoise
+
+        def height_at(x: float, y: float) -> float:
+            micro = bnoise.noise(
+                (x / _MICRO_SCALE, y / _MICRO_SCALE, seed_offset + 91.0)
+            ) * _MICRO_AMP
+            if amp <= 0.0:
+                return micro
+            nx, ny = x / scale, y / scale
+            h = 0.0
+            for (oct_amp, oct_freq) in _FBM_OCTAVES:
+                h += oct_amp * bnoise.noise(
+                    (nx * oct_freq, ny * oct_freq, seed_offset + oct_freq * 7.7)
+                )
+            return h * amp + micro
+
+        return height_at
+
+
 _PRESETS: dict[str, dict[str, float]] = {
     "flat":    {"amp": 0.0, "scale": 1.0,  "octave2_freq": 0.0, "octave2_amp": 0.0},
     "rolling": {"amp": 1.5, "scale": 14.0, "octave2_freq": 2.1, "octave2_amp": 0.4},
@@ -139,35 +208,13 @@ def make_terrain(
     for low-poly silhouettes without making the OBJ huge.
     """
     import bpy
-    from mathutils import noise as bnoise
 
     preset = _PRESETS.get(style, _PRESETS["flat"])
     amp = preset["amp"] * extra_amp_scale
     scale = preset["scale"]
-    o2_freq = preset["octave2_freq"]
-    o2_amp = preset["octave2_amp"]
     seed_z = seed * 0.001
 
-    def height_at(x: float, y: float) -> float:
-        # Sub-meter micro detail. Even "flat" presets get this so a
-        # ground plane isn't perfectly Z=0 — buildings and objects
-        # placed on a true plane look fake (no shadow gradient at
-        # contact, no grazing-angle texture).
-        nx_m = x / _MICRO_SCALE
-        ny_m = y / _MICRO_SCALE
-        micro = bnoise.noise((nx_m, ny_m, seed_z + 91.0)) * _MICRO_AMP
-
-        if amp <= 0.0:
-            return micro
-        nx, ny = x / scale, y / scale
-        # mathutils.noise.noise returns roughly [-1, 1]; sum two octaves
-        # for variety without paying for a full FBM stack.
-        h = bnoise.noise((nx, ny, seed_z)) * amp
-        if o2_freq > 0:
-            h += (
-                bnoise.noise((nx * o2_freq, ny * o2_freq, seed_z + 17.0)) * amp * o2_amp
-            )
-        return h + micro
+    height_at = _make_height_sampler(amp, scale, seed)
 
     # Build the mesh by hand — primitive_plane + Displace would also work,
     # but the explicit grid lets us share the *exact same* sample function
@@ -236,33 +283,19 @@ def _zone_color(style: str, override) -> tuple[float, float, float, float]:
 
 
 def _zone_height_fn(style: str, cx: float, cy: float, seed_z: float):
-    """Return a callable computing the zone's local terrain height at world (x, y).
-    Heights are sampled in the zone's local frame so each zone's noise field
-    is centered on its own placement, not on the world origin."""
-    from mathutils import noise as bnoise
-
+    """Return a callable computing the zone's local terrain height at
+    world (x, y). Heights are sampled in the zone's local frame so each
+    zone's noise field is centered on its own placement, not on the
+    world origin. Same FBM stack as the single-biome path."""
     preset = _PRESETS.get(style, _PRESETS["flat"])
     amp = preset["amp"]
     scale = preset["scale"]
-    o2_freq = preset["octave2_freq"]
-    o2_amp = preset["octave2_amp"]
+    # Fold seed_z back into an int seed so we can reuse _make_height_sampler.
+    int_seed = int(round(seed_z * 1e6))
+    inner = _make_height_sampler(amp, scale, int_seed)
 
     def h(x: float, y: float) -> float:
-        # Per-zone micro detail so flat zones (e.g. ocean shore) still
-        # have grazing-angle texture rather than reading as a glass plate.
-        micro = bnoise.noise(
-            ((x - cx) / _MICRO_SCALE, (y - cy) / _MICRO_SCALE, seed_z + 91.0)
-        ) * _MICRO_AMP
-        if amp <= 0.0:
-            return micro
-        nx = (x - cx) / scale
-        ny = (y - cy) / scale
-        v = bnoise.noise((nx, ny, seed_z)) * amp
-        if o2_freq > 0:
-            v += bnoise.noise(
-                (nx * o2_freq, ny * o2_freq, seed_z + 17.0)
-            ) * amp * o2_amp
-        return v + micro
+        return inner(x - cx, y - cy)
     return h
 
 

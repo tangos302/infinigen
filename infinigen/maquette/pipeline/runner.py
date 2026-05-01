@@ -646,6 +646,70 @@ _CATEGORY_LABELS = {
 }
 
 
+# Keywords that bias the prompt toward one of the three terrain helpers.
+# Order matters: eroded wins over multi-biome wins over simple if a prompt
+# triggers more than one bucket (a "coastal mountain village" is more
+# eroded than multi-biome).
+_EROIDED_KEYWORDS = (
+    "mountain", "peak", "alpine", "valley", "ravine", "canyon", "gorge",
+    "cliff", "ridge", "summit", "fjord", "fjords", "coast", "coastal",
+    "shore", "shoreline", "island", "archipelago", "atoll", "isle",
+    "lake", "lakeside", "river", "stream", "delta", "highland",
+    "lowland", "vista", "panorama", "overland", "tundra", "watershed",
+)
+_MULTI_BIOME_KEYWORDS = (
+    "border", "transition", "between", "fringe", "edge of", "meets",
+    "where the", "savanna and", "grassland and", "desert and",
+    "forest and", "marsh", "wetland", "ecotone",
+)
+_FLAT_KEYWORDS = (
+    "courtyard", "plaza", "market square", "atrium", "deck",
+    "platform", "garden", "zen garden", "bonsai", "rooftop",
+)
+
+
+def _terrain_recommendation_block(user_prompt: str) -> str:
+    """Inspect the prompt for terrain-shape signals and emit a short
+    nudge block telling Claude which helper to use. Heuristic only —
+    Claude can still override; this just biases toward the right
+    helper when the prompt clearly calls for it (and reduces the
+    chances of "panoramic mountain vista" landing on flat ground)."""
+    if not user_prompt:
+        return ""
+    p = user_prompt.lower()
+    eroded_hits = [k for k in _EROIDED_KEYWORDS if k in p]
+    flat_hits = [k for k in _FLAT_KEYWORDS if k in p]
+    multi_hits = [k for k in _MULTI_BIOME_KEYWORDS if k in p]
+
+    if eroded_hits and not flat_hits:
+        return (
+            "## TERRAIN RECOMMENDATION (auto-picked from prompt)\n\n"
+            f"Prompt mentions {', '.join(repr(k) for k in eroded_hits[:4])} — "
+            "use ``make_eroded_terrain`` (game-ready relief with hydraulic "
+            "erosion + biome bands). Pick peaks/troughs that match the "
+            "described topography. Skip the simple ``make_terrain`` for "
+            "this one.\n\n"
+            "If the scene is also coastal/island, pass "
+            "``edge_floor=sea_level - 1.0`` so the world rim floods into "
+            "open ocean.\n\n"
+        )
+    if multi_hits and not flat_hits:
+        return (
+            "## TERRAIN RECOMMENDATION (auto-picked from prompt)\n\n"
+            f"Prompt mentions a biome boundary ({', '.join(repr(k) for k in multi_hits[:3])}) — "
+            "use ``make_multi_biome_terrain`` with two-three zones to "
+            "render the ground colors as distinct regions.\n\n"
+        )
+    if flat_hits:
+        return (
+            "## TERRAIN RECOMMENDATION (auto-picked from prompt)\n\n"
+            f"Prompt mentions {', '.join(repr(k) for k in flat_hits[:3])} — "
+            "use ``make_terrain(style='flat')``. The scene reads as a "
+            "human-scale ground plane, not a landform.\n\n"
+        )
+    return ""
+
+
 def build_prompt(
     user_prompt: str,
     *,
@@ -734,10 +798,13 @@ def build_prompt(
     if mode != "low_poly":
         mode_block = f"## MODE: {mode}\n\nFollow the realistic-mode catalog below.\n\n"
 
+    terrain_block = _terrain_recommendation_block(user_prompt)
+
     return (
         f"{_SYSTEM_PROMPT}\n\n"
         f"{mode_block}"
         f"## Factory catalog\n\n{guide}\n\n"
+        f"{terrain_block}"
         f"{example_block}"
         f"{image_block}"
         f"{debug_block}"

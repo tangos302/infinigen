@@ -498,6 +498,53 @@ def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, Palett
     return np.clip(out, 0, 1)
 
 
+def _decimate_terrain(obj, target_verts: int) -> None:
+    """COLLAPSE-decimate the terrain mesh to ~target_verts.
+
+    Vertex colors (the ``Col`` FLOAT_COLOR attribute that drives biome
+    scatter) are preserved through the collapse. We don't iterate to a
+    floor like polycap does for factories — heightmap meshes are
+    well-behaved (single connected component, regular topology) so a
+    single ratio pass lands within ~5% of target every time.
+
+    Idempotent if the mesh is already under budget.
+    """
+    import bpy
+
+    me = obj.data
+    n = len(me.vertices)
+    if n <= int(target_verts):
+        return
+    ratio = max(0.02, min(1.0, float(target_verts) / float(n)))
+
+    prev_active = bpy.context.view_layer.objects.active
+    prev_selected = list(bpy.context.selected_objects)
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        mod_name = "TerrainLOD"
+        mod = obj.modifiers.new(mod_name, "DECIMATE")
+        mod.decimate_type = "COLLAPSE"
+        mod.ratio = ratio
+        try:
+            bpy.ops.object.modifier_apply(modifier=mod_name)
+        except RuntimeError as exc:
+            print(f"[eroded_terrain] decimate failed ({n}->{target_verts}): {exc}")
+            if mod_name in obj.modifiers:
+                obj.modifiers.remove(obj.modifiers[mod_name])
+    finally:
+        bpy.ops.object.select_all(action="DESELECT")
+        for o in prev_selected:
+            try:
+                o.select_set(True)
+            except (ReferenceError, RuntimeError):
+                pass
+        bpy.context.view_layer.objects.active = prev_active
+
+    print(f"[eroded_terrain] decimated {n} -> {len(me.vertices)} verts (target {target_verts})")
+
+
 def _build_water_mesh(name: str, mask, size: float, water_level: float, thickness: float):
     """Build a polygonal water volume that follows the basin outline.
 
@@ -654,6 +701,8 @@ def make_eroded_terrain(
     water_thickness: float = 0.4,
     water_min_area_cells: int = 12,
     water_low_poly_shader: bool = True,
+    target_verts: int | None = 12000,
+    realistic_textures: bool = False,
 ) -> Terrain:
     """Build a hydraulically-eroded terrain mesh.
 
@@ -685,6 +734,19 @@ def make_eroded_terrain(
         use the shared low-poly water recipe; when False they use a
         simple alpha-blend Principled BSDF parameterised by
         ``water_color``.
+      * ``target_verts`` — post-build DECIMATE target. Default 12000
+        keeps the ground browser-friendly after GLB export
+        (resolution=256 builds a 65k-vert mesh). Pass ``None`` to
+        skip decimation. Vertex colors are preserved through the
+        COLLAPSE decimator so biome-driven scatter still works on
+        the decimated mesh.
+      * ``realistic_textures`` — when True, replace the flat
+        vertex-color material with a PBR shader that blends 5
+        Polyhaven CC0 texture sets (grass / forest / rock / snow /
+        sand) by a per-vertex Splat mask, with box projection +
+        Voronoi macro overlay. Requires the textures present in
+        ``runtime/textures/`` (see that dir's README for sources);
+        falls back to vertex-color silently if any are missing.
     """
     import bpy
     import numpy as np
@@ -762,6 +824,58 @@ def make_eroded_terrain(
         bsdf.inputs["Specular"].default_value = 0.05
     nt.links.new(bsdf.outputs["BSDF"], out_node.inputs["Surface"])
     me.materials.append(mat)
+
+    # Splat vertex attributes — five biome weights (grass/forest/rock/
+    # snow/sand) packed into Splat (RGBA) + Splat2.R. These drive the
+    # realistic-textures shader; written here even when realistic mode
+    # is off so the attribute is always available for downstream
+    # consumers (export, scatter overrides).
+    splat = None
+    if realistic_textures:
+        try:
+            from infinigen.maquette.runtime import terrain_textures as _tt
+            splat = _tt.compute_splat_weights(H, alpine, float(sea_level))
+            _tt.write_splat_attributes(me, splat)
+        except Exception as exc:
+            print(f"[eroded_terrain] splat write skipped ({type(exc).__name__}: {exc})")
+            splat = None
+
+    # LOD: decimate the ground for browser-friendly GLB export. Keep
+    # the heightmap H around for height_at — placement accuracy is
+    # bilinear on the source grid, not the decimated mesh, so this
+    # only affects render geometry.
+    if target_verts is not None and len(me.vertices) > int(target_verts):
+        # If splat was written pre-decimate it gets interpolated by
+        # COLLAPSE — fine, but we get crisper masks by re-sampling at
+        # decimated vert positions. Re-sample after decimation.
+        had_splat = realistic_textures and splat is not None
+        if had_splat:
+            # Strip pre-decimate splat attrs so we don't end up with
+            # duplicated names after the post-decimate write.
+            for an in ("Splat", "Splat2"):
+                if an in me.color_attributes:
+                    me.color_attributes.remove(me.color_attributes[an])
+        _decimate_terrain(obj, int(target_verts))
+        if had_splat:
+            try:
+                from infinigen.maquette.runtime import terrain_textures as _tt
+                _tt.write_splat_post_decimate(me, splat, float(size))
+            except Exception as exc:
+                print(f"[eroded_terrain] post-decimate splat skipped ({type(exc).__name__}: {exc})")
+
+    # Replace the vertex-color material with the realistic PBR shader
+    # when textures + splat are available.
+    if realistic_textures and splat is not None:
+        try:
+            from infinigen.maquette.runtime import terrain_textures as _tt
+            if _tt.textures_available():
+                me.materials.clear()
+                me.materials.append(_tt.build_realistic_terrain_material())
+                print("[eroded_terrain] realistic PBR material applied")
+            else:
+                print("[eroded_terrain] realistic_textures requested but textures missing — kept vertex-color material")
+        except Exception as exc:
+            print(f"[eroded_terrain] realistic material skipped ({type(exc).__name__}: {exc})")
 
     if water:
         try:
