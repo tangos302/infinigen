@@ -710,8 +710,8 @@ def make_eroded_terrain(
     water_min_area_cells: int = 12,
     water_low_poly_shader: bool = True,
     target_verts: int | None = 12000,
-    realistic_textures: bool = False,
-    bake_for_export: bool = False,
+    realistic_textures: bool | None = None,
+    bake_for_export: bool | None = None,
     bake_resolution: int = 1024,
 ) -> Terrain:
     """Build a hydraulically-eroded terrain mesh.
@@ -757,6 +757,9 @@ def make_eroded_terrain(
         Voronoi macro overlay. Requires the textures present in
         ``runtime/textures/`` (see that dir's README for sources);
         falls back to vertex-color silently if any are missing.
+        ``None`` (default) reads ``MAQUETTE_REALISTIC_TERRAIN`` from
+        the environment so the maquette runner can force this on for
+        realistic-mode pipelines without LLM cooperation.
       * ``bake_for_export`` — only meaningful when ``realistic_textures``
         is True. Bakes the procedural shader (Voronoi macro + per-pixel
         Splat blend) to flat 2D textures so glTF export captures the
@@ -765,6 +768,8 @@ def make_eroded_terrain(
         (~10-30s for a 2k bake); only set when you're going to render +
         export the GLB. Cycles render quality of the .blend itself is
         not improved by this flag.
+        ``None`` (default) reads ``MAQUETTE_BAKE_FOR_EXPORT`` from
+        the environment for the same reason as ``realistic_textures``.
       * ``bake_resolution`` — texture size for the bake target. 1024
         is the browser-friendly default (~5 MB GLB after Draco). Bump
         to 2048 for hero/marketing renders; beyond that the procedural
@@ -779,6 +784,15 @@ def make_eroded_terrain(
         # Default: rim sits just above sea level so inland scenes don't
         # flood. Coastal prompts override with a sub-sea-level value.
         edge_floor = max(float(sea_level) + 0.2, float(plain_offset) - 1.5)
+
+    # Env-var defaults — let the maquette runner force realistic-mode
+    # behavior without depending on the LLM remembering to pass the
+    # kwargs. Explicit ``True``/``False`` always wins over the env.
+    import os as _os
+    if realistic_textures is None:
+        realistic_textures = _os.environ.get("MAQUETTE_REALISTIC_TERRAIN", "0") == "1"
+    if bake_for_export is None:
+        bake_for_export = _os.environ.get("MAQUETTE_BAKE_FOR_EXPORT", "0") == "1"
 
     print(f"[eroded_terrain] base heightmap (peaks={len(peaks)}, troughs={len(troughs)})")
     H0, alpine = _build_heightmap(
