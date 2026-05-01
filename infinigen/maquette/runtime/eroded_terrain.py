@@ -703,6 +703,8 @@ def make_eroded_terrain(
     water_low_poly_shader: bool = True,
     target_verts: int | None = 12000,
     realistic_textures: bool = False,
+    bake_for_export: bool = False,
+    bake_resolution: int = 1024,
 ) -> Terrain:
     """Build a hydraulically-eroded terrain mesh.
 
@@ -747,6 +749,18 @@ def make_eroded_terrain(
         Voronoi macro overlay. Requires the textures present in
         ``runtime/textures/`` (see that dir's README for sources);
         falls back to vertex-color silently if any are missing.
+      * ``bake_for_export`` — only meaningful when ``realistic_textures``
+        is True. Bakes the procedural shader (Voronoi macro + per-pixel
+        Splat blend) to flat 2D textures so glTF export captures the
+        actual look (otherwise the browser sees a fallback grey
+        because procedural nodes don't survive the exporter). Slow
+        (~10-30s for a 2k bake); only set when you're going to render +
+        export the GLB. Cycles render quality of the .blend itself is
+        not improved by this flag.
+      * ``bake_resolution`` — texture size for the bake target. 1024
+        is the browser-friendly default (~5 MB GLB after Draco). Bump
+        to 2048 for hero/marketing renders; beyond that the procedural
+        shader's effective resolution is the limiting factor.
     """
     import bpy
     import numpy as np
@@ -865,6 +879,7 @@ def make_eroded_terrain(
 
     # Replace the vertex-color material with the realistic PBR shader
     # when textures + splat are available.
+    realistic_applied = False
     if realistic_textures and splat is not None:
         try:
             from infinigen.maquette.runtime import terrain_textures as _tt
@@ -872,10 +887,25 @@ def make_eroded_terrain(
                 me.materials.clear()
                 me.materials.append(_tt.build_realistic_terrain_material())
                 print("[eroded_terrain] realistic PBR material applied")
+                realistic_applied = True
             else:
                 print("[eroded_terrain] realistic_textures requested but textures missing — kept vertex-color material")
         except Exception as exc:
             print(f"[eroded_terrain] realistic material skipped ({type(exc).__name__}: {exc})")
+
+    # Bake the realistic shader for glTF export. Procedural Voronoi +
+    # Splat-driven mixes don't make it through ``export_scene.gltf``;
+    # this collapses them to flat 2D textures + a Principled BSDF.
+    if bake_for_export and realistic_applied:
+        try:
+            from infinigen.maquette.runtime import terrain_textures as _tt
+            ok = _tt.bake_realistic_for_export(obj, float(size), int(bake_resolution))
+            if ok:
+                print(f"[eroded_terrain] baked realistic shader to {bake_resolution}² textures")
+            else:
+                print("[eroded_terrain] bake_for_export requested but bake failed — kept procedural shader")
+        except Exception as exc:
+            print(f"[eroded_terrain] bake skipped ({type(exc).__name__}: {exc})")
 
     if water:
         try:

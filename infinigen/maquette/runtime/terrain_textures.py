@@ -470,3 +470,162 @@ def build_realistic_terrain_material(name: str = "eroded_terrain_realistic"):
 
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
+
+
+def bake_realistic_for_export(obj, size: float, resolution: int = 2048) -> bool:
+    """Bake the realistic shader to flat 2D textures so glTF export
+    captures the actual look.
+
+    The procedural Voronoi macro overlay + per-vertex Splat blends in
+    ``build_realistic_terrain_material`` don't survive ``export_scene.gltf``
+    — only Image Texture nodes wired straight into Principled BSDF do.
+    This helper:
+
+      1. Creates a single-island planar UV (top-down projection for the
+         heightmap mesh — no seams, even sampling).
+      2. Bakes Cycles passes (color / normal tangent-space / roughness)
+         to three blank images at ``resolution × resolution``.
+      3. Packs the baked images into the .blend so the glTF exporter
+         embeds them directly.
+      4. Replaces the procedural material with an exportable Principled
+         BSDF that reads the baked maps.
+
+    Returns True on success, False if Cycles isn't available or the bake
+    step fails (caller keeps the live procedural material).
+
+    Trade-off: the baked diffuse loses high-frequency tile detail (a
+    2k bake over a 160 BU world is ~12 BU per texel, vs the live
+    shader's effective ~13 wraps × 1k texels). Acceptable for the
+    browser, where the 5-set splat shader couldn't run anyway.
+    """
+    import bpy
+
+    if obj is None or obj.type != "MESH":
+        return False
+    me = obj.data
+    if not me.materials or me.materials[0] is None:
+        return False
+
+    # 1. Planar top-down UV. Build per-loop UVs from each loop's vertex.
+    if "UVMap" in me.uv_layers:
+        me.uv_layers.remove(me.uv_layers["UVMap"])
+    uv = me.uv_layers.new(name="UVMap")
+    span = 2.0 * float(size)
+    # Vectorized fill via foreach_set — per-loop array of 2 floats.
+    import numpy as np
+    n_loops = len(me.loops)
+    loop_v_idx = np.zeros(n_loops, dtype=np.int32)
+    me.loops.foreach_get("vertex_index", loop_v_idx)
+    n_verts = len(me.vertices)
+    v_co = np.zeros(n_verts * 3, dtype=np.float32)
+    me.vertices.foreach_get("co", v_co)
+    v_co = v_co.reshape(n_verts, 3)
+    uvs = np.empty((n_loops, 2), dtype=np.float32)
+    uvs[:, 0] = (v_co[loop_v_idx, 0] + size) / span
+    uvs[:, 1] = (v_co[loop_v_idx, 1] + size) / span
+    uv.data.foreach_set("uv", uvs.ravel())
+
+    # 2. Empty bake target images. Float buffer for normals so we don't
+    # quantise to 8 bits before Principled reads them.
+    res = int(resolution)
+    img_diff = bpy.data.images.new("terrain_baked_diffuse", res, res, alpha=False)
+    img_diff.colorspace_settings.name = "sRGB"
+    # Normal map at 8-bit — standard for game/web pipelines. Float
+    # buffer would 3× the GLB size for marginal precision gain.
+    img_norm = bpy.data.images.new("terrain_baked_normal", res, res, alpha=False)
+    img_norm.colorspace_settings.name = "Non-Color"
+    img_rough = bpy.data.images.new("terrain_baked_roughness", res, res, alpha=False)
+    img_rough.colorspace_settings.name = "Non-Color"
+
+    # 3. Wire a temporary Image Texture node into the live material.
+    # Cycles bake writes into whichever IMAGE_TEXTURE node is selected
+    # & active in the material's node tree.
+    mat = me.materials[0]
+    nt = mat.node_tree
+    bake_tex = nt.nodes.new("ShaderNodeTexImage")
+    for n in nt.nodes:
+        n.select = False
+    bake_tex.select = True
+    nt.nodes.active = bake_tex
+
+    # 4. Configure Cycles + run the three bakes.
+    sc = bpy.context.scene
+    prev_engine = sc.render.engine
+    sc.render.engine = "CYCLES"
+    # Bake quality — keep it modest; the input shader is already PBR.
+    prev_samples = sc.cycles.samples
+    sc.cycles.samples = 4
+    bake_settings = sc.render.bake
+
+    prev_active = bpy.context.view_layer.objects.active
+    prev_selected = list(bpy.context.selected_objects)
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+
+        # Diffuse — only the color pass, no direct/indirect light.
+        bake_tex.image = img_diff
+        bake_settings.use_pass_direct = False
+        bake_settings.use_pass_indirect = False
+        bake_settings.use_pass_color = True
+        bpy.ops.object.bake(type="DIFFUSE")
+
+        # Normal — tangent-space, matches what NormalMap node expects.
+        bake_tex.image = img_norm
+        bake_settings.normal_space = "TANGENT"
+        bpy.ops.object.bake(type="NORMAL")
+
+        # Roughness.
+        bake_tex.image = img_rough
+        bpy.ops.object.bake(type="ROUGHNESS")
+    except RuntimeError as exc:
+        print(f"[terrain bake] failed: {exc}")
+        nt.nodes.remove(bake_tex)
+        sc.render.engine = prev_engine
+        sc.cycles.samples = prev_samples
+        return False
+    finally:
+        sc.cycles.samples = prev_samples
+        sc.render.engine = prev_engine
+        bpy.ops.object.select_all(action="DESELECT")
+        for o in prev_selected:
+            try:
+                o.select_set(True)
+            except (ReferenceError, RuntimeError):
+                pass
+        bpy.context.view_layer.objects.active = prev_active
+
+    # Pack the bake outputs so the .blend ships them and glTF embeds them.
+    for img in (img_diff, img_norm, img_rough):
+        try:
+            img.pack()
+        except Exception as exc:
+            print(f"[terrain bake] pack {img.name} skipped: {exc}")
+
+    # 5. Build a flat exportable material and swap it in.
+    flat = bpy.data.materials.new("eroded_terrain_baked")
+    flat.use_nodes = True
+    fnt = flat.node_tree
+    for n in list(fnt.nodes):
+        if n.type != "OUTPUT_MATERIAL":
+            fnt.nodes.remove(n)
+    out = fnt.nodes["Material Output"]
+    bsdf = fnt.nodes.new("ShaderNodeBsdfPrincipled")
+
+    diff_n = fnt.nodes.new("ShaderNodeTexImage"); diff_n.image = img_diff
+    fnt.links.new(diff_n.outputs["Color"], bsdf.inputs["Base Color"])
+
+    norm_n = fnt.nodes.new("ShaderNodeTexImage"); norm_n.image = img_norm
+    nm = fnt.nodes.new("ShaderNodeNormalMap")
+    fnt.links.new(norm_n.outputs["Color"], nm.inputs["Color"])
+    fnt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+
+    rough_n = fnt.nodes.new("ShaderNodeTexImage"); rough_n.image = img_rough
+    fnt.links.new(rough_n.outputs["Color"], bsdf.inputs["Roughness"])
+
+    fnt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    me.materials.clear()
+    me.materials.append(flat)
+    return True
