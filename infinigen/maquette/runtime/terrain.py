@@ -69,6 +69,35 @@ _PRESETS: dict[str, dict[str, float]] = {
 }
 
 
+# Even "flat" terrain shouldn't be perfectly Z=0 — buildings/objects
+# placed on a true plane look fake. This is the per-axis amplitude of
+# a sub-meter ripple added to every preset (including flat) so there's
+# always some texture for shadows and grazing camera angles.
+_MICRO_AMP = 0.06
+_MICRO_SCALE = 3.0
+
+
+def _srgb_to_linear_rgba(rgba):
+    """Convert an (R, G, B[, A]) tuple from sRGB intent to scene-linear.
+
+    The Standard view transform sRGB-encodes whatever the shader graph
+    outputs. If we feed it sRGB-numbered values directly they get
+    encoded twice and look blown out — exactly what the user reported
+    on first-pass renders. Convert here so palette numbers in build
+    scripts match how they read in a paint program.
+    """
+    def s2l(c):
+        c = float(c)
+        if c <= 0.04045:
+            return c / 12.92
+        return ((c + 0.055) / 1.055) ** 2.4
+    if len(rgba) == 4:
+        r, g, b, a = rgba
+        return (s2l(r), s2l(g), s2l(b), float(a))
+    r, g, b = rgba
+    return (s2l(r), s2l(g), s2l(b), 1.0)
+
+
 # Default ground color per style — used when a multi-biome zone doesn't
 # specify a `color`. Hand-picked to read distinctly across the OBJ/MTL
 # round trip (Kd values map to flat colors in the Three.js viewer).
@@ -120,8 +149,16 @@ def make_terrain(
     seed_z = seed * 0.001
 
     def height_at(x: float, y: float) -> float:
+        # Sub-meter micro detail. Even "flat" presets get this so a
+        # ground plane isn't perfectly Z=0 — buildings and objects
+        # placed on a true plane look fake (no shadow gradient at
+        # contact, no grazing-angle texture).
+        nx_m = x / _MICRO_SCALE
+        ny_m = y / _MICRO_SCALE
+        micro = bnoise.noise((nx_m, ny_m, seed_z + 91.0)) * _MICRO_AMP
+
         if amp <= 0.0:
-            return 0.0
+            return micro
         nx, ny = x / scale, y / scale
         # mathutils.noise.noise returns roughly [-1, 1]; sum two octaves
         # for variety without paying for a full FBM stack.
@@ -130,7 +167,7 @@ def make_terrain(
             h += (
                 bnoise.noise((nx * o2_freq, ny * o2_freq, seed_z + 17.0)) * amp * o2_amp
             )
-        return h
+        return h + micro
 
     # Build the mesh by hand — primitive_plane + Displace would also work,
     # but the explicit grid lets us share the *exact same* sample function
@@ -165,8 +202,14 @@ def make_terrain(
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes.get("Principled BSDF")
     if bsdf is not None:
-        bsdf.inputs["Base Color"].default_value = base_color
+        bsdf.inputs["Base Color"].default_value = _srgb_to_linear_rgba(base_color)
         bsdf.inputs["Roughness"].default_value = 1.0
+        # Kill specular so the ground doesn't read as plastic when the
+        # sun is low.
+        if "Specular IOR Level" in bsdf.inputs:
+            bsdf.inputs["Specular IOR Level"].default_value = 0.05
+        elif "Specular" in bsdf.inputs:
+            bsdf.inputs["Specular"].default_value = 0.05
     obj.data.materials.append(mat)
 
     return Terrain(height_at=height_at, obj=obj)
@@ -205,8 +248,13 @@ def _zone_height_fn(style: str, cx: float, cy: float, seed_z: float):
     o2_amp = preset["octave2_amp"]
 
     def h(x: float, y: float) -> float:
+        # Per-zone micro detail so flat zones (e.g. ocean shore) still
+        # have grazing-angle texture rather than reading as a glass plate.
+        micro = bnoise.noise(
+            ((x - cx) / _MICRO_SCALE, (y - cy) / _MICRO_SCALE, seed_z + 91.0)
+        ) * _MICRO_AMP
         if amp <= 0.0:
-            return 0.0
+            return micro
         nx = (x - cx) / scale
         ny = (y - cy) / scale
         v = bnoise.noise((nx, ny, seed_z)) * amp
@@ -214,7 +262,7 @@ def _zone_height_fn(style: str, cx: float, cy: float, seed_z: float):
             v += bnoise.noise(
                 (nx * o2_freq, ny * o2_freq, seed_z + 17.0)
             ) * amp * o2_amp
-        return v
+        return v + micro
     return h
 
 
@@ -335,14 +383,20 @@ def make_multi_biome_terrain(
         for poly in me.polygons:
             poly.use_smooth = True
 
-    # One material per zone, kept in slot order = zone index.
+    # One material per zone, kept in slot order = zone index. Colors
+    # are authored sRGB-intent; convert to scene-linear for the shader
+    # graph so they don't blow out under Standard view transform.
     for idx, zs in enumerate(zone_specs):
         mat = bpy.data.materials.new(f"biome_{idx}_{zs['style']}")
         mat.use_nodes = True
         bsdf = mat.node_tree.nodes.get("Principled BSDF")
         if bsdf is not None:
-            bsdf.inputs["Base Color"].default_value = zs["color"]
+            bsdf.inputs["Base Color"].default_value = _srgb_to_linear_rgba(zs["color"])
             bsdf.inputs["Roughness"].default_value = 1.0
+            if "Specular IOR Level" in bsdf.inputs:
+                bsdf.inputs["Specular IOR Level"].default_value = 0.05
+            elif "Specular" in bsdf.inputs:
+                bsdf.inputs["Specular"].default_value = 0.05
         obj.data.materials.append(mat)
 
     # Per-face material assignment — sample the face center, pick the

@@ -43,29 +43,35 @@ from typing import Sequence
 
 # Biome → RGB-test recipe. Each entry is a list of (channel, op, threshold)
 # triples that all must hold (logical AND) for a face's `Col` to count
-# as that biome. The palette comes from `eroded_terrain._biome_colors`:
-#     meadow  (0.40, 0.52, 0.24)   forest  (0.22, 0.34, 0.18)
-#     stone   (0.50, 0.46, 0.40)   alpine  (0.60, 0.58, 0.55)
-#     snow    (0.94, 0.95, 0.96)   shore   (0.78, 0.72, 0.55)
-#     lakebed (0.55, 0.50, 0.36)
+# as that biome.
+#
+# Thresholds are in **linear RGB**, matching how the eroded-terrain
+# helper now writes vertex colors. The palette in
+# ``eroded_terrain._DEFAULT_PALETTE`` is authored in sRGB intent and
+# converted to linear at write time (so it doesn't blow out under the
+# Standard view transform). Linear values:
+#     meadow  (0.13, 0.21, 0.04)   forest  (0.03, 0.07, 0.02)
+#     stone   (0.18, 0.15, 0.10)   alpine  (0.30, 0.27, 0.25)
+#     snow    (0.71, 0.75, 0.82)   shore   (0.50, 0.40, 0.20)
+#     lakebed (0.18, 0.13, 0.07)
 _BIOME_TESTS: dict[str, list[tuple[str, str, float]]] = {
-    # Bright grass — high G, moderate R, low B.
-    "meadow":  [("G", ">", 0.42), ("G", "<", 0.65), ("R", "<", 0.55), ("B", "<", 0.40)],
-    # Darker green — low R, mid G, low B.
-    "forest":  [("G", ">", 0.26), ("G", "<", 0.42), ("R", "<", 0.32), ("B", "<", 0.30)],
-    # Grass band overall (forest + meadow combined) — useful for tree scatter
-    # that's happy in either green band.
-    "grass":   [("G", ">", 0.26), ("G", "<", 0.62), ("R", "<", 0.55), ("B", "<", 0.42)],
-    # Stone band — neutral grey-brown, R≈G≈B mid.
-    "stone":   [("R", ">", 0.42), ("R", "<", 0.58), ("G", ">", 0.40), ("G", "<", 0.55),
-                ("B", ">", 0.34), ("B", "<", 0.48)],
-    # Alpine — neutral grey, slightly higher than stone.
-    "alpine":  [("R", ">", 0.55), ("R", "<", 0.72), ("G", ">", 0.52), ("B", ">", 0.50),
-                ("B", "<", 0.62)],
-    # Snow — all channels near 1.0.
-    "snow":    [("R", ">", 0.85), ("G", ">", 0.85), ("B", ">", 0.85)],
-    # Sandy shore — R high, G mid-high, B lower.
-    "shore":   [("R", ">", 0.65), ("G", ">", 0.60), ("B", "<", 0.65), ("R", ">", "B+0.10")],
+    # Bright grass — green dominant.
+    "meadow":  [("G", ">", 0.13), ("G", "<", 0.40), ("R", "<", 0.27), ("B", "<", 0.10)],
+    # Darker green — lower amplitude across all channels.
+    "forest":  [("G", ">", 0.04), ("G", "<", 0.14), ("R", "<", 0.10), ("B", "<", 0.05)],
+    # Grass band overall (forest + meadow combined) — useful for tree
+    # scatter that's happy in either green band.
+    "grass":   [("G", ">", 0.04), ("G", "<", 0.40), ("R", "<", 0.27), ("B", "<", 0.12)],
+    # Stone band — neutral grey-brown, mid-low.
+    "stone":   [("R", ">", 0.13), ("R", "<", 0.27), ("G", ">", 0.10), ("G", "<", 0.22),
+                ("B", ">", 0.07), ("B", "<", 0.16)],
+    # Alpine — neutral grey, brighter than stone.
+    "alpine":  [("R", ">", 0.25), ("R", "<", 0.42), ("G", ">", 0.22), ("B", ">", 0.20),
+                ("B", "<", 0.34)],
+    # Snow — all channels bright (linear ≈ 0.7+).
+    "snow":    [("R", ">", 0.55), ("G", ">", 0.55), ("B", ">", 0.55)],
+    # Sandy shore — R high, B much lower.
+    "shore":   [("R", ">", 0.36), ("G", ">", 0.27), ("B", "<", 0.30), ("R", ">", "B+0.15")],
     # No filter — distribute everywhere except water (which we exclude
     # implicitly because the auto-water cubes sit above the lakebed mesh).
     "any":     [],
