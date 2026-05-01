@@ -893,7 +893,7 @@ def make_eroded_terrain(
             from infinigen.maquette.runtime import terrain_textures as _tt
             if _tt.textures_available():
                 me.materials.clear()
-                me.materials.append(_tt.build_realistic_terrain_material())
+                me.materials.append(_tt.build_realistic_terrain_material(seed=int(seed)))
                 print("[eroded_terrain] realistic PBR material applied")
                 realistic_applied = True
             else:

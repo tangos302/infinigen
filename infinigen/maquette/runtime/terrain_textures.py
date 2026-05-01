@@ -56,27 +56,75 @@ _BIOME_TINTS: dict[str, tuple[float, float, float]] = {
 }
 
 
-# Per-biome image set. Each entry resolves to (diffuse, normal, rough)
-# inside ``_TEX_DIR``. Filenames match the Polyhaven 1k JPG layout.
+# Per-biome image sets — multiple options per biome so two scenes
+# don't always render with the same diffuse. Selected per build via
+# ``_pick_biome_sets(seed)``. Filenames match Polyhaven 1k JPG layout.
+def _set(name: str) -> tuple[str, str, str]:
+    return (f"{name}_diff_1k.jpg", f"{name}_nor_gl_1k.jpg", f"{name}_rough_1k.jpg")
+
+
+_BIOME_SETS_OPTIONS: dict[str, list[tuple[str, str, str]]] = {
+    "grass":  [
+        _set("aerial_grass_rock"),  # mossy meadow with rocks
+        _set("grass_path_2"),       # tighter grass with dirt patches
+        _set("forest_floor"),       # mossy forest floor — reads as lush meadow
+    ],
+    "forest": [
+        _set("forrest_ground_01"),  # leaf-and-twig duff
+        _set("forrest_ground_03"),  # bare dark earth
+        _set("brown_mud_leaves_01"),  # wet leaf litter
+    ],
+    "rock":   [
+        _set("aerial_rocks_02"),    # mossy rocks
+        _set("aerial_rocks_04"),    # bare grey scree
+        _set("rock_face_03"),       # cliff face
+        _set("rocky_terrain_02"),   # alpine talus
+    ],
+    "snow":   [
+        _set("snow_02"),            # smooth snow
+        _set("snow_03"),            # wind-swept ridges
+    ],
+    "sand":   [
+        _set("coast_sand_rocks_02"),  # beach with pebbles
+        _set("aerial_beach_03"),      # plain beach sand
+        _set("brown_mud_dry"),        # cracked dry mud (riverbed)
+    ],
+}
+
+
+def _pick_biome_sets(seed: int) -> dict[str, tuple[str, str, str]]:
+    """Roll one (diffuse, normal, rough) tuple per biome from the
+    options dict, deterministic on ``seed`` — same scene seed = same
+    look. Different scene seeds get different texture rolls so
+    consecutive runs feel distinct.
+    """
+    import random
+
+    rng = random.Random(int(seed) ^ 0x7E22A1)
+    return {biome: rng.choice(opts) for biome, opts in _BIOME_SETS_OPTIONS.items()}
+
+
+# Backward-compat alias — picks the first option per biome (deterministic
+# fallback for callers that don't pass a seed).
 _BIOME_SETS: dict[str, tuple[str, str, str]] = {
-    # aerial_grass_rock — denser green grass with rock patches; reads
-    # as a real meadow at distance. sparse_grass was too tan/dry.
-    "grass":  ("aerial_grass_rock_diff_1k.jpg",   "aerial_grass_rock_nor_gl_1k.jpg",   "aerial_grass_rock_rough_1k.jpg"),
-    "forest": ("forrest_ground_01_diff_1k.jpg",   "forrest_ground_01_nor_gl_1k.jpg",   "forrest_ground_01_rough_1k.jpg"),
-    "rock":   ("aerial_rocks_02_diff_1k.jpg",     "aerial_rocks_02_nor_gl_1k.jpg",     "aerial_rocks_02_rough_1k.jpg"),
-    "snow":   ("snow_02_diff_1k.jpg",             "snow_02_nor_gl_1k.jpg",             "snow_02_rough_1k.jpg"),
-    "sand":   ("coast_sand_rocks_02_diff_1k.jpg", "coast_sand_rocks_02_nor_gl_1k.jpg", "coast_sand_rocks_02_rough_1k.jpg"),
+    biome: opts[0] for biome, opts in _BIOME_SETS_OPTIONS.items()
 }
 
 
 def textures_available() -> bool:
-    """True when every biome's diffuse/normal/roughness JPG is present
-    in ``runtime/textures/``. The realistic shader falls back to the
-    vertex-color recipe when this returns False."""
-    for d, n, r in _BIOME_SETS.values():
-        for fname in (d, n, r):
-            if not (_TEX_DIR / fname).is_file():
-                return False
+    """True when each biome has at least one fully-present
+    (diffuse, normal, roughness) trio. We only need ONE option per
+    biome to be available — missing alternates just shrink the
+    per-scene variety pool.
+    """
+    for biome, opts in _BIOME_SETS_OPTIONS.items():
+        biome_ok = False
+        for d, n, r in opts:
+            if all((_TEX_DIR / f).is_file() for f in (d, n, r)):
+                biome_ok = True
+                break
+        if not biome_ok:
+            return False
     return True
 
 
@@ -256,16 +304,21 @@ def _load_image(name: str):
     return img
 
 
-def _build_biome_branch(nt, biome: str, mapping_out, normal_strength: float = 1.0):
+def _build_biome_branch(nt, biome: str, mapping_out, normal_strength: float = 1.0,
+                        sets: dict[str, tuple[str, str, str]] | None = None):
     """Build the (diffuse, normal, roughness) sub-graph for one biome.
 
     The diffuse goes through a per-biome tint multiply (see
     ``_BIOME_TINTS``) so we can push individual biomes warmer/cooler/
     greener without changing the source texture.
 
+    ``sets`` overrides the default (first-option) biome image triple;
+    pass the result of ``_pick_biome_sets(seed)`` to roll a per-scene
+    variant.
+
     Returns (color_socket, normal_socket, rough_socket).
     """
-    diff_name, nor_name, rough_name = _BIOME_SETS[biome]
+    diff_name, nor_name, rough_name = (sets or _BIOME_SETS)[biome]
     tint = _BIOME_TINTS.get(biome, (1.0, 1.0, 1.0))
     nodes = nt.nodes
     links = nt.links
@@ -378,7 +431,8 @@ def _mix_value(nt, factor_socket, a_socket, b_socket):
     return add.outputs[0]
 
 
-def build_realistic_terrain_material(name: str = "eroded_terrain_realistic"):
+def build_realistic_terrain_material(name: str = "eroded_terrain_realistic",
+                                     seed: int = 0):
     """Construct a Cycles-friendly PBR shader that blends the 5 biome
     texture sets via the ``Splat`` / ``Splat2`` vertex attributes.
 
@@ -402,10 +456,14 @@ def build_realistic_terrain_material(name: str = "eroded_terrain_realistic"):
     """
     import bpy
 
-    mat = bpy.data.materials.get(name)
+    # Per-seed material name — distinct seeds get distinct materials so
+    # two scenes with different rolls don't share a cached one.
+    full_name = f"{name}_s{int(seed) & 0xFFFF}"
+    mat = bpy.data.materials.get(full_name)
     if mat is not None:
         return mat
-    mat = bpy.data.materials.new(name)
+    sets = _pick_biome_sets(int(seed))
+    mat = bpy.data.materials.new(full_name)
     mat.use_nodes = True
     nt = mat.node_tree
     for n in list(nt.nodes):
@@ -426,12 +484,12 @@ def build_realistic_terrain_material(name: str = "eroded_terrain_realistic"):
     nt.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
     map_out = mapping.outputs["Vector"]
 
-    # Per-biome branches.
-    sand_d,   sand_n,   sand_r   = _build_biome_branch(nt, "sand",   map_out, 0.7)
-    grass_d,  grass_n,  grass_r  = _build_biome_branch(nt, "grass",  map_out, 0.9)
-    forest_d, forest_n, forest_r = _build_biome_branch(nt, "forest", map_out, 1.0)
-    rock_d,   rock_n,   rock_r   = _build_biome_branch(nt, "rock",   map_out, 1.2)
-    snow_d,   snow_n,   snow_r   = _build_biome_branch(nt, "snow",   map_out, 0.6)
+    # Per-biome branches — pass the rolled set for this scene.
+    sand_d,   sand_n,   sand_r   = _build_biome_branch(nt, "sand",   map_out, 0.7, sets)
+    grass_d,  grass_n,  grass_r  = _build_biome_branch(nt, "grass",  map_out, 0.9, sets)
+    forest_d, forest_n, forest_r = _build_biome_branch(nt, "forest", map_out, 1.0, sets)
+    rock_d,   rock_n,   rock_r   = _build_biome_branch(nt, "rock",   map_out, 1.2, sets)
+    snow_d,   snow_n,   snow_r   = _build_biome_branch(nt, "snow",   map_out, 0.6, sets)
 
     # Splat weights from the two FLOAT_COLOR vertex attributes.
     # ShaderNodeVertexColor (a.k.a. Color Attribute node) is the one

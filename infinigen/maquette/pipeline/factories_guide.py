@@ -648,6 +648,38 @@ terrain = make_terrain(
 # the browser GLB ends up greyscale because procedural Voronoi +
 # splat blends don't survive export_scene.gltf. Don't ship without them.
 
+# LOADED CC0 ASSETS — large variety pool of pre-modeled low-poly
+# buildings, trees, rocks, and plants from CC0 packs (Kenney "Retro
+# Medieval Kit" and "Nature Kit" via OpenGameArt). Use these when the
+# scene needs visual variety beyond what the procedural factories give:
+#
+#   from infinigen.maquette.runtime.loaded_factory import (
+#       LoadedMedievalFactory,   # 105 archetypes: walls, towers, columns,
+#                                # docks, fences, barrels, ladders, roofs
+#       LoadedTreeFactory,       # 61 archetypes: tree variants × season
+#                                # (default/dark/fall) × shape (cone/blocks)
+#       LoadedRockFactory,       # 30 archetypes: rock_largeA..F + smallA..H
+#       LoadedPlantFactory,      # 28 archetypes: plant_*, flower_*,
+#                                # mushroom_*, grass_*, lily_*
+#   )
+#
+#   # List archetypes for a category:
+#   LoadedMedievalFactory.archetypes()
+#
+#   # Spawn one (interface matches every other factory in the catalog):
+#   f = LoadedTreeFactory(archetype="tree_cone_dark", factory_seed=1, scale=2.5)
+#   f.spawn_asset(i=0, loc=(x, y, terrain.height_at(x, y)))
+#
+#   # archetype=None rolls a random archetype seeded by factory_seed —
+#   # cheapest way to get a varied stand of trees:
+#   for k in range(20):
+#       LoadedTreeFactory(factory_seed=k+1, scale=2.5).spawn_asset(
+#           i=k, loc=(x, y, terrain.height_at(x, y)))
+#
+# Spawned objects share mesh data via ``object.copy()`` so 100 trees of
+# the same archetype don't bloat the .blend. They ship at low poly
+# count already (~200-500 verts each) — no decimate hook needed.
+
 # CARVING PATHS / ROADS through the eroded terrain — use carve_path so
 # a stone trail or plaza sits on a flat corridor rather than bobbing
 # over the natural micro-relief:
