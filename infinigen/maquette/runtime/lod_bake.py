@@ -38,6 +38,25 @@ Why this approach
   quantization.
 - Instance batching at bake-time means the runtime never sees thousands
   of one-tree draw calls — only one InstancedMesh per asset class.
+
+Terrain through this pipeline
+-----------------------------
+``make_eroded_terrain(realistic_textures=True, bake_for_export=True)``
+produces a mesh + 3 packed PBR textures (baseColor / normal / metalRough,
+1024² each) that pass cleanly through every stage here:
+
+  - dedup        : terrain has no duplicates so this is a no-op.
+  - instance     : terrain is unique, never instanced.
+  - simplify     : 12k → ~4k verts at the default ratio=0.25. Fine —
+                   the silhouette holds because terrain detail is
+                   already encoded in the baked normal map, not the
+                   geometry.
+  - quantize     : ~2% size reduction.
+  - draco        : ~3% size reduction.
+
+End-to-end on a typical scene the baked terrain GLB is ~5.7 MB after
+compression. Verified 2026-05-01 via gltf-transform inspect; no special
+casing needed in this module.
 """
 
 from __future__ import annotations

@@ -67,9 +67,17 @@ PaletteRGB = tuple[float, float, float]
 
 @dataclass
 class Terrain:
-    """Same shape as the simple-helper Terrain so callers don't branch."""
+    """Same shape as the simple-helper Terrain so callers don't branch.
+
+    ``heightmap`` and ``size`` are exposed so post-build helpers (e.g.
+    ``carve_path``) can mutate the underlying field in place — the
+    ``height_at`` closure samples ``heightmap`` directly, so any
+    in-place edit is picked up by subsequent placements.
+    """
     height_at: Callable[[float, float], float]
     obj: object
+    heightmap: object = None  # numpy.ndarray (res, res) when available
+    size: float = 0.0
 
 
 # Palette is **sRGB-intent** — these are the values you'd type into a
@@ -945,4 +953,143 @@ def make_eroded_terrain(
         b = h01 * (1 - fu) + h11 * fu
         return a * (1 - fv) + b * fv
 
-    return Terrain(height_at=height_at, obj=obj)
+    return Terrain(height_at=height_at, obj=obj, heightmap=H, size=float(size))
+
+
+def carve_path(
+    terrain: Terrain,
+    waypoints: Sequence[tuple[float, float]],
+    *,
+    width: float = 2.5,
+    blend: float = 1.5,
+    depth: float = 0.0,
+) -> None:
+    """Flatten a corridor through the eroded terrain along a polyline.
+
+    The corridor sits at the linearly-interpolated height of the waypoints
+    (sampled from the terrain at each waypoint's XY), shifted by
+    ``depth``. Within ``width / 2`` of the centerline the cells are
+    fully flattened; over the next ``blend`` BU the corridor smoothsteps
+    back to the original surface.
+
+    Mutates ``terrain.heightmap`` in place + rewrites the mesh's vertex
+    Z values, so a build script can call ``terrain.height_at(x, y)``
+    afterward and get the carved heights for object placement on the
+    path.
+
+    Parameters
+    ----------
+    terrain     : the Terrain returned by ``make_eroded_terrain``.
+    waypoints   : iterable of (x, y) world-space points defining the
+                  path centerline. Three or more points produce a
+                  natural curve; two are a straight segment.
+    width       : full corridor width in BU (a 2.5 BU path is wide
+                  enough for two villagers to pass).
+    blend       : feather distance over which the carved height eases
+                  back to the natural surface. Smaller = harder edge.
+    depth       : Z offset of the carved path below the interpolated
+                  waypoint height. 0 leaves the path level with the
+                  surface; -0.05 to -0.10 reads as a worn cobble track.
+
+    Notes
+    -----
+    The carving is purely an XY mask — it doesn't bevel or terrace.
+    For a stone trail set ``depth=-0.05`` and lay a thin path mesh
+    on top via the build script (terrain.height_at + 0.02).
+    For a flat plaza, pass three or four waypoints describing its
+    perimeter and a ``width`` larger than the plaza extent.
+    """
+    import numpy as np
+
+    if terrain.heightmap is None:
+        raise ValueError("Terrain has no heightmap exposed; carve_path "
+                         "requires a make_eroded_terrain build.")
+    pts = list(waypoints)
+    if len(pts) < 2:
+        raise ValueError("carve_path needs at least 2 waypoints")
+
+    H = terrain.heightmap
+    res = H.shape[0]
+    size = float(terrain.size)
+    span = 2.0 * size
+
+    # Build per-pixel world coordinates.
+    coords = np.linspace(-size, size, res, dtype=np.float32)
+    GX, GY = np.meshgrid(coords, coords)
+
+    # Per-segment: distance from each grid point to the segment + the
+    # height that segment contributes (linear lerp of waypoint heights).
+    waypoint_z = np.array(
+        [terrain.height_at(float(px), float(py)) for px, py in pts],
+        dtype=np.float32,
+    )
+
+    min_dist = np.full((res, res), np.inf, dtype=np.float32)
+    seg_z = np.zeros((res, res), dtype=np.float32)
+
+    half_w = float(width) * 0.5
+    blend_w = float(blend)
+
+    for k in range(len(pts) - 1):
+        x0, y0 = float(pts[k][0]), float(pts[k][1])
+        x1, y1 = float(pts[k + 1][0]), float(pts[k + 1][1])
+        z0 = float(waypoint_z[k])
+        z1 = float(waypoint_z[k + 1])
+
+        dx = x1 - x0
+        dy = y1 - y0
+        seg_len_sq = dx * dx + dy * dy
+        if seg_len_sq < 1e-9:
+            continue
+
+        # Project each grid point onto the segment, clamped to [0, 1].
+        t = ((GX - x0) * dx + (GY - y0) * dy) / seg_len_sq
+        t = np.clip(t, 0.0, 1.0)
+        px = x0 + t * dx
+        py = y0 + t * dy
+        d = np.sqrt((GX - px) ** 2 + (GY - py) ** 2)
+        seg_height = z0 + t * (z1 - z0)
+
+        # Where this segment is the closest one, take its height + distance.
+        closer = d < min_dist
+        min_dist = np.where(closer, d, min_dist)
+        seg_z = np.where(closer, seg_height, seg_z)
+
+    target_z = seg_z + float(depth)
+
+    # Mask: 1.0 inside the corridor, 0.0 outside, smoothstep in between.
+    inner = np.clip((half_w + blend_w - min_dist) / max(blend_w, 1e-3), 0.0, 1.0)
+    inner = np.where(min_dist <= half_w, 1.0, inner)
+    # Smoothstep on the feather band.
+    fade = inner * inner * (3.0 - 2.0 * inner)
+
+    new_H = H * (1.0 - fade) + target_z * fade
+    H[...] = new_H.astype(np.float32)
+
+    # Rewrite the mesh's vertex Z from the new heightmap (bilinear
+    # sample at each vert's XY — matches the existing height_at logic).
+    obj = terrain.obj
+    if obj is None or not hasattr(obj, "data"):
+        return
+    me = obj.data
+    n_verts = len(me.vertices)
+    flat = np.zeros(n_verts * 3, dtype=np.float32)
+    me.vertices.foreach_get("co", flat)
+    flat = flat.reshape(n_verts, 3)
+    u = (flat[:, 0] + size) / span * (res - 1)
+    v = (flat[:, 1] + size) / span * (res - 1)
+    u = np.clip(u, 0.0, res - 1.001)
+    v = np.clip(v, 0.0, res - 1.001)
+    i = u.astype(np.int32)
+    j = v.astype(np.int32)
+    fu = u - i
+    fv = v - j
+    h00 = H[j,     i    ]
+    h10 = H[j,     i + 1]
+    h01 = H[j + 1, i    ]
+    h11 = H[j + 1, i + 1]
+    a = h00 * (1 - fu) + h10 * fu
+    b = h01 * (1 - fu) + h11 * fu
+    flat[:, 2] = a * (1 - fv) + b * fv
+    me.vertices.foreach_set("co", flat.reshape(-1))
+    me.update()

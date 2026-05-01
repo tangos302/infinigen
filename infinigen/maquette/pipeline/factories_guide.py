@@ -630,6 +630,38 @@ terrain = make_terrain(
 # Same multi-biome / eroded helpers are available — see low-poly guide
 # for parameter recipes. They are mode-agnostic.
 
+# REALISTIC-MODE TERRAIN (when using make_eroded_terrain): turn on the
+# PBR shader + bake-for-export so the GLB ships actual textures
+# instead of a flat fallback. The kwargs cost ~5s combined and produce
+# a browser-ready terrain GLB:
+#
+#   from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
+#   terrain = make_eroded_terrain(
+#       size=140, seed=<seed>, peaks=[...], troughs=[...],
+#       realistic_textures=True,    # PBR shader (5 biome textures + box projection)
+#       bake_for_export=True,       # bake to flat textures so glTF embeds them
+#       bake_resolution=1024,       # 1k = ~6.7 MB GLB; 2048 for hero shots only
+#   )
+#
+# If a build script for realistic mode forgets these flags the .blend
+# render still looks right (Cycles handles procedural shaders), but
+# the browser GLB ends up greyscale because procedural Voronoi +
+# splat blends don't survive export_scene.gltf. Don't ship without them.
+
+# CARVING PATHS / ROADS through the eroded terrain — use carve_path so
+# a stone trail or plaza sits on a flat corridor rather than bobbing
+# over the natural micro-relief:
+#
+#   from infinigen.maquette.runtime.eroded_terrain import carve_path
+#   carve_path(
+#       terrain,
+#       waypoints=[(-50, -30), (-20, -10), (5, 5), (30, 25)],
+#       width=3.0,        # full corridor width in BU
+#       blend=2.0,        # feather distance back to natural surface
+#       depth=-0.05,      # 0 = flat at surface; -0.05 = recessed track
+#   )
+#   # Subsequent terrain.height_at(x, y) calls return the carved heights.
+
 # 1b. Scatter foliage / boulders / grass on the terrain via Geometry Nodes.
 #     IMPORTANT: RealisticTreeFactory has a seed-dependent upstream bug.
 #     Some genome seeds silently kill the script after twig-collection

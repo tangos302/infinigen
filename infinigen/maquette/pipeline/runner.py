@@ -668,7 +668,7 @@ _FLAT_KEYWORDS = (
 )
 
 
-def _terrain_recommendation_block(user_prompt: str) -> str:
+def _terrain_recommendation_block(user_prompt: str, mode: str = "low_poly") -> str:
     """Inspect the prompt for terrain-shape signals and emit a short
     nudge block telling Claude which helper to use. Heuristic only —
     Claude can still override; this just biases toward the right
@@ -681,6 +681,16 @@ def _terrain_recommendation_block(user_prompt: str) -> str:
     flat_hits = [k for k in _FLAT_KEYWORDS if k in p]
     multi_hits = [k for k in _MULTI_BIOME_KEYWORDS if k in p]
 
+    realistic_extra = ""
+    if mode == "realistic":
+        realistic_extra = (
+            "Pass ``realistic_textures=True, bake_for_export=True`` so "
+            "the PBR shader survives glTF export — without these, the "
+            "browser sees flat grey instead of the actual look. "
+            "``bake_resolution=1024`` is the right default; bump to "
+            "2048 only for hero/marketing renders.\n\n"
+        )
+
     if eroded_hits and not flat_hits:
         return (
             "## TERRAIN RECOMMENDATION (auto-picked from prompt)\n\n"
@@ -689,7 +699,8 @@ def _terrain_recommendation_block(user_prompt: str) -> str:
             "erosion + biome bands). Pick peaks/troughs that match the "
             "described topography. Skip the simple ``make_terrain`` for "
             "this one.\n\n"
-            "If the scene is also coastal/island, pass "
+            + realistic_extra
+            + "If the scene is also coastal/island, pass "
             "``edge_floor=sea_level - 1.0`` so the world rim floods into "
             "open ocean.\n\n"
         )
@@ -798,7 +809,7 @@ def build_prompt(
     if mode != "low_poly":
         mode_block = f"## MODE: {mode}\n\nFollow the realistic-mode catalog below.\n\n"
 
-    terrain_block = _terrain_recommendation_block(user_prompt)
+    terrain_block = _terrain_recommendation_block(user_prompt, mode=mode)
 
     return (
         f"{_SYSTEM_PROMPT}\n\n"

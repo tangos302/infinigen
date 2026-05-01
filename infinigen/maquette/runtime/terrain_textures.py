@@ -34,6 +34,28 @@ from pathlib import Path
 _TEX_DIR = Path(__file__).resolve().parent / "textures"
 
 
+# Per-biome diffuse tint — multiplied into the diffuse before blending
+# so we can push grass green-er or rock cooler without re-downloading
+# textures. Authored as sRGB-intent colours (the value you'd type into
+# a paint program); the shader feeds them through a Combine Color so
+# the multiply is per-channel.
+#
+# Default tints chosen 2026-05-01 after the user noted aerial textures
+# read as warm/desaturated:
+#   grass  : (0.85, 1.05, 0.70) — push green up, knock red+blue down
+#   forest : (0.85, 1.00, 0.70) — slight green push, less aggressive
+#   rock   : (1.00, 1.00, 1.05) — neutral with a tiny cool cast
+#   snow   : (1.00, 1.00, 1.05) — same cool cast so snow doesn't pink
+#   sand   : (1.05, 0.95, 0.80) — warmer, drier
+_BIOME_TINTS: dict[str, tuple[float, float, float]] = {
+    "grass":  (0.85, 1.05, 0.70),
+    "forest": (0.85, 1.00, 0.70),
+    "rock":   (1.00, 1.00, 1.05),
+    "snow":   (1.00, 1.00, 1.05),
+    "sand":   (1.05, 0.95, 0.80),
+}
+
+
 # Per-biome image set. Each entry resolves to (diffuse, normal, rough)
 # inside ``_TEX_DIR``. Filenames match the Polyhaven 1k JPG layout.
 _BIOME_SETS: dict[str, tuple[str, str, str]] = {
@@ -237,9 +259,14 @@ def _load_image(name: str):
 def _build_biome_branch(nt, biome: str, mapping_out, normal_strength: float = 1.0):
     """Build the (diffuse, normal, roughness) sub-graph for one biome.
 
+    The diffuse goes through a per-biome tint multiply (see
+    ``_BIOME_TINTS``) so we can push individual biomes warmer/cooler/
+    greener without changing the source texture.
+
     Returns (color_socket, normal_socket, rough_socket).
     """
     diff_name, nor_name, rough_name = _BIOME_SETS[biome]
+    tint = _BIOME_TINTS.get(biome, (1.0, 1.0, 1.0))
     nodes = nt.nodes
     links = nt.links
 
@@ -248,6 +275,18 @@ def _build_biome_branch(nt, biome: str, mapping_out, normal_strength: float = 1.
     diff_tex.projection = "BOX"
     diff_tex.projection_blend = 0.15
     links.new(mapping_out, diff_tex.inputs["Vector"])
+
+    # Tint multiply — RGB MULTIPLY at full Fac. Tints near (1,1,1)
+    # are no-ops; only colored multipliers actually shift the look.
+    if tint != (1.0, 1.0, 1.0):
+        tint_node = nodes.new("ShaderNodeMixRGB")
+        tint_node.blend_type = "MULTIPLY"
+        tint_node.inputs["Fac"].default_value = 1.0
+        tint_node.inputs["Color2"].default_value = (tint[0], tint[1], tint[2], 1.0)
+        links.new(diff_tex.outputs["Color"], tint_node.inputs["Color1"])
+        diff_out = tint_node.outputs["Color"]
+    else:
+        diff_out = diff_tex.outputs["Color"]
 
     nor_tex = nodes.new("ShaderNodeTexImage")
     nor_tex.image = _load_image(nor_name)
@@ -265,7 +304,7 @@ def _build_biome_branch(nt, biome: str, mapping_out, normal_strength: float = 1.
     rough_tex.projection_blend = 0.15
     links.new(mapping_out, rough_tex.inputs["Vector"])
 
-    return diff_tex.outputs["Color"], nor_map.outputs["Normal"], rough_tex.outputs["Color"]
+    return diff_out, nor_map.outputs["Normal"], rough_tex.outputs["Color"]
 
 
 def _mix_color(nt, factor_socket, a_socket, b_socket):
