@@ -58,13 +58,58 @@ def to_nodegroup(name=None, singleton=False, type="GeometryNodeTree"):
 
 
 def assign_curve(c, points, handles=None):
-    for i, p in enumerate(points):
-        if i < 2:
-            c.points[i].location = p
-        else:
-            c.points.new(*p)
+    """Set a CurveMap's control points.
 
-        if handles is not None:
+    Blender 4.2 changed CurveMapPoints.new() to silently return None
+    (raising bpy SystemError "returned NULL without setting an
+    exception") when called with arbitrary (x, y) coordinates that
+    violate internal invariants — typically when the new point's x
+    coordinate matches or is too close to an existing point's x.
+
+    Workaround: create new points at safely-spaced default x positions
+    first, then set their final location. The default y is 0.5 (mid-
+    range, always valid) and we space defaults across (0, 1) so each
+    new point lands at a unique x. The final loop then writes the
+    desired location, which Blender accepts as a position update on an
+    existing point.
+    """
+    # Normalise `points` to plain (x, y) float tuples. Callers sometimes
+    # pass numpy size-1 arrays as components — e.g.
+    # `normal(0, 0.2, 1)` returns `np.array([…])`, so a tuple element can
+    # be a 1-D array. Numpy 2.x rejects implicit `float()` on size-1
+    # arrays, so we go via `.item()` (works on Python floats too via
+    # `np.asarray`).
+    import numpy as _np
+
+    def _scalar(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return float(_np.asarray(x).item())
+
+    pts = [(_scalar(p[0]), _scalar(p[1])) for p in points]
+    n_pts = len(pts)
+    n_existing = len(c.points)
+
+    # Phase 1: ensure the curve has enough point slots.
+    for i in range(n_existing, n_pts):
+        # Spread placeholder x positions so consecutive new() calls
+        # don't collide on the same x (Blender 4.2 silently rejects
+        # those, returning NULL without raising).
+        placeholder_x = 0.05 + 0.9 * (i + 1) / (n_pts + 1)
+        try:
+            c.points.new(placeholder_x, 0.5)
+        except (SystemError, RuntimeError):
+            # Even the placeholder rejected — accept fewer points and
+            # let the caller's shader degrade gracefully.
+            break
+
+    # Phase 2: set each point's final location and handle type.
+    for i, (x, y) in enumerate(pts):
+        if i >= len(c.points):
+            break
+        c.points[i].location = (x, y)
+        if handles is not None and i < len(handles):
             c.points[i].handle_type = handles[i]
 
 

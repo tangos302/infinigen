@@ -20,7 +20,13 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .factories_guide import FORK_ROOT, MAQUETTE_DIR, write_guide
+from .factories_guide import (
+    FORK_ROOT,
+    MAQUETTE_DIR,
+    VALID_MODES,
+    guide_path_for,
+    write_guide,
+)
 
 EXAMPLE_PATH = MAQUETTE_DIR / "pipeline" / "examples" / "medieval_village.py"
 
@@ -647,6 +653,7 @@ def build_prompt(
     reference_image_paths: list[Path] | None = None,
     debug: bool = False,
     include_categories: list[str] | None = None,
+    mode: str = "low_poly",
 ) -> str:
     """Assemble the full prompt: system instructions + factory catalog +
     canonical example + user prompt + optional reference image attachments.
@@ -654,11 +661,22 @@ def build_prompt(
     Reference images are injected as ``@<absolute_path>`` lines so Claude
     Code attaches them to the conversation; the model can then describe
     palette, silhouettes, and composition cues from the image while writing
-    the build script."""
+    the build script.
+
+    The ``mode`` selects which factory catalog gets injected:
+      - ``low_poly`` (default): stylized maquette factories.
+      - ``realistic``: upstream-Infinigen-backed factories with full
+        procedural shaders and no decimate.
+    """
+    if mode not in VALID_MODES:
+        raise ValueError(f"mode={mode!r} not in {VALID_MODES}")
     if regenerate_guide:
-        write_guide()
-    guide = _read_text(MAQUETTE_DIR / "FACTORIES_GUIDE.md")
-    example = _read_text(EXAMPLE_PATH)
+        write_guide(mode=mode)
+    guide = _read_text(guide_path_for(mode))
+    # The canonical example was authored against low-poly factories; in
+    # realistic mode the inline skeleton in the header is enough and a
+    # mismatched example would confuse the model.
+    example = _read_text(EXAMPLE_PATH) if mode == "low_poly" else None
 
     image_block = ""
     if reference_image_paths:
@@ -702,14 +720,25 @@ def build_prompt(
                 "Camera + sun + world background are always required.\n\n"
             )
 
+    example_block = ""
+    if example is not None:
+        example_block = (
+            f"## Canonical example — \"medieval village by a stream\"\n\n"
+            f"This is the gold-standard build script you should pattern-match\n"
+            f"on. Same structure (wipe → ground → spawns → camera → sun → world\n"
+            f"→ render to $MAQUETTE_OUT_DIR), different content per prompt.\n\n"
+            f"```python\n{example}\n```\n\n"
+        )
+
+    mode_block = ""
+    if mode != "low_poly":
+        mode_block = f"## MODE: {mode}\n\nFollow the realistic-mode catalog below.\n\n"
+
     return (
         f"{_SYSTEM_PROMPT}\n\n"
+        f"{mode_block}"
         f"## Factory catalog\n\n{guide}\n\n"
-        f"## Canonical example — \"medieval village by a stream\"\n\n"
-        f"This is the gold-standard build script you should pattern-match\n"
-        f"on. Same structure (wipe → ground → spawns → camera → sun → world\n"
-        f"→ render to $MAQUETTE_OUT_DIR), different content per prompt.\n\n"
-        f"```python\n{example}\n```\n\n"
+        f"{example_block}"
         f"{image_block}"
         f"{debug_block}"
         f"{category_block}"
@@ -844,14 +873,19 @@ def generate(user_prompt: str, *, model: str | None = None,
              regenerate_guide: bool = True,
              reference_image_paths: list[Path] | None = None,
              debug: bool = False,
-             include_categories: list[str] | None = None) -> GenerationResult:
-    """End-to-end: prompt → Claude → extracted script."""
+             include_categories: list[str] | None = None,
+             mode: str = "low_poly") -> GenerationResult:
+    """End-to-end: prompt → Claude → extracted script.
+
+    ``mode`` selects the factory catalog: ``low_poly`` (stylized maquette,
+    default) or ``realistic`` (upstream Infinigen, post-baked to LODs)."""
     full_prompt = build_prompt(
         user_prompt,
         regenerate_guide=regenerate_guide,
         reference_image_paths=reference_image_paths,
         debug=debug,
         include_categories=include_categories,
+        mode=mode,
     )
     response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
     script = extract_script(response)

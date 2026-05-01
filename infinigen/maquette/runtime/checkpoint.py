@@ -63,9 +63,16 @@ def checkpoint(phase_name: str) -> str | None:
     bpy.ops.object.select_all(action="DESELECT")
     has_mesh = False
     for o in bpy.data.objects:
-        if o.type == "MESH":
+        if o.type != "MESH":
+            continue
+        try:
             o.select_set(True)
             has_mesh = True
+        except RuntimeError:
+            # Object is in a collection not visible to the current
+            # ViewLayer (e.g. Building Tools' internal helper objects);
+            # safe to skip — it doesn't belong in the OBJ export anyway.
+            continue
 
     obj_path = run_dir / "map.obj"
     if has_mesh:

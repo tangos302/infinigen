@@ -26,7 +26,12 @@ from infinigen.core.util.random import log_uniform
 class BoulderPileFactory(AssetFactory):
     def __init__(self, factory_seed, coarse=False):
         super().__init__(factory_seed, coarse)
-        self.factory = BoulderFactory(factory_seed, coarse)
+        # BoulderFactory's 2nd positional arg is `meshing_cameras`, not
+        # `coarse`. Passing positionally as in the original line
+        # (`BoulderFactory(factory_seed, coarse)`) misroutes coarse=False
+        # into self.cameras=False, which then trips the camera-meshing
+        # assertion downstream. Use kwargs.
+        self.factory = BoulderFactory(factory_seed, coarse=coarse)
 
     @staticmethod
     def create_floor():
@@ -63,6 +68,14 @@ class BoulderPileFactory(AssetFactory):
                 log_uniform(0.1, 0.2),
             ]
             p = self.factory.create_placeholder()
+            # BoulderFactory.create_placeholder returns a mesh object
+            # directly, not an Empty-with-mesh-child as the original
+            # pile implementation assumed. Wrap in an Empty so the
+            # `p.children[0]` accesses below resolve.
+            if not p.children:
+                wrapper = butil.spawn_empty("placeholder_pile_wrap")
+                p.parent = wrapper
+                p = wrapper
             p.parent = empty_
             objects.append(p.children[0])
             for s in scale[1:]:
@@ -81,9 +94,18 @@ class BoulderPileFactory(AssetFactory):
 
     def create_asset(self, placeholder, face_size=0.01, **params) -> bpy.types.Object:
         objects = []
-        for c in tqdm.tqdm(placeholder.children, desc="Creating boulder assets"):
+        for idx, c in enumerate(
+            tqdm.tqdm(placeholder.children, desc="Creating boulder assets")
+        ):
             p = c.children[0]
-            a = self.factory.create_asset(placeholder=p)
+            # `p` here is the wrapper Empty introduced by our patched
+            # create_placeholder; the actual boulder mesh is at
+            # p.children[0]. BoulderFactory.create_asset expects the
+            # boulder mesh, not the wrapper.
+            boulder_mesh = p.children[0] if p.type == "EMPTY" and p.children else p
+            # Upstream BoulderFactory.create_asset requires the `i` arg
+            # which the original code path forgot.
+            a = self.factory.create_asset(i=idx, placeholder=boulder_mesh)
             a.location = p.children[0].location
             a.rotation_euler = p.children[0].rotation_euler
             objects.append(a)

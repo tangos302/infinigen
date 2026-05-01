@@ -23,21 +23,113 @@ from infinigen.maquette.factories.native.<module> import LowPoly<X>Factory
 # ... repeat for each factory you need
 from infinigen.maquette.factories.boulder import LowPolyBoulderFactory  # wrapper
 from infinigen.maquette.runtime.terrain import make_terrain
+# OR — when the prompt mixes biomes (grass + desert, forest + coast, etc.):
+# from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
+# OR — for SERIOUS terrain (dramatic peaks + river systems + image refs):
+# from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
 
 rng = random.Random(<seed>)
 
-# 1. Wipe scene + create displaced ground via the terrain helper. NEVER
-# build the ground as a bare plane — pick a style preset that matches
-# the prompt's mood (flat / rolling / hilly / alpine / dunes). The helper
-# returns a height sampler used when placing every other object.
+# 1. Wipe scene + create displaced ground. NEVER build it as a bare plane.
+# Pick the helper that fits the prompt:
+#   make_terrain(style=...)             — flat/rolling/hilly/alpine/dunes,
+#                                         single biome, fast.
+#   make_multi_biome_terrain(zones=...) — mixed biomes side-by-side,
+#                                         simple zone blender (faceted edges).
+#   make_eroded_terrain(peaks=, troughs=) — game-ready quality.
+#                                         Hydraulic erosion (landlab) +
+#                                         continuous biome colors.
+#                                         REQUIRED when the prompt names
+#                                         dramatic terrain (mountain ranges,
+#                                         river valleys, "vast plains with
+#                                         a peak in the distance"), or any
+#                                         time an image reference is provided
+#                                         showing complex relief.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 terrain = make_terrain(
     style="<flat|rolling|hilly|alpine|dunes>",
-    size=40,                                # half-width in BU
+    size=80,                                # half-width in BU; world 160 BU wide
     base_color=(<R>, <G>, <B>, 1.0),
     seed=<scene seed>,
 )
+# Multi-biome alternative (replace the single-biome call above when needed):
+#   terrain = make_multi_biome_terrain(
+#       size=80,
+#       seed=<seed>,
+#       zones=[
+#           ("rolling", -30,   0, 25),   # grass headland on the west
+#           ("dunes",    20,  -8, 22),   # sandy fringe on the southeast
+#           ("flat",      0,  38, 30),   # ocean side (add water plane on top)
+#       ],
+#   )
+# Eroded (game-ready) alternative — peaks + troughs spec:
+#   terrain = make_eroded_terrain(
+#       size=140,                         # bigger world; relief reads at 280 BU wide
+#       seed=<seed>,
+#       peaks=[
+#           # (cx, cy, sigma, height) — Gaussians for mountain masses.
+#           # Heights ≥12 BU get ridged-noise alpine character + snow caps.
+#           (115, 50, 25, 18.0),          # hero alpine NE
+#           (-110, 70, 18, 4.5),          # secondary western range
+#           (-95, -110, 22, 5.0),         # foreground vantage hill (camera vp)
+#       ],
+#       troughs=[
+#           # (cx, cy, sigma, depth NEGATIVE) — chain these to thread a
+#           # winding river/lake basin. Erosion will carve drainage from peaks
+#           # toward the troughs naturally.
+#           (-40, -10, 14, -3.6),
+#           ( 5,   5, 12, -3.4),
+#           ( 30, 20, 14, -3.2),
+#       ],
+#       plain_offset=2.4,                  # lift plains so meadow dominates
+#       sea_level=0.5,                     # below = lakebed/shore
+#       erode_iters=35,                    # 25 soft, 35 default, 60 aggressive
+#       # water=True is the default — auto-detects connected basins
+#       # below sea_level and drops one translucent blue cube per body.
+#       # Pass water=False to suppress (terrain-only renders).
+#   )
+# After this call: `terrain.height_at(x, y)` returns the eroded surface
+# height at any world XY — use it the same way as make_terrain.
+# DO NOT add LowPolyWaterSurfaceFactory on top of make_eroded_terrain —
+# the helper already places water volumes per basin from the heightmap.
+
+# 1b. Scatter foliage / boulders / grass on the terrain via Geometry Nodes.
+#     This is BIOME-AWARE — pass a single template, the helper instances
+#     it across all faces matching the biome filter.
+# from infinigen.maquette.runtime.scatter import scatter_on_terrain
+#
+# tree_tmpl = NativeLowPolyTreeFactory(factory_seed=1, foliage_archetype="round_ball",
+#                                      trunk_archetype="straight").create_asset(placeholder=None)
+# tree_tmpl.scale = (0.4, 0.4, 0.4)        # WORLD_SCALE × 0.25 for size=140
+# scatter_on_terrain(
+#     terrain_obj=terrain.obj,
+#     instance_obj=tree_tmpl,
+#     density=0.006,                          # ~600 trees over a 280 BU world's grass band
+#     biome_filter="grass",                   # see _BIOME_TESTS in scatter.py
+#     seed=42,
+# )
+# # Boulders on the alpine bands — sparser, slightly larger jitter.
+# boulder_tmpl = LowPolyBoulderFactory(factory_seed=2, palette_color="rock_warm").spawn_asset(
+#     i=2, loc=(0, 0, 0))
+# boulder_tmpl.scale = (0.5, 0.5, 0.5)
+# scatter_on_terrain(
+#     terrain_obj=terrain.obj, instance_obj=boulder_tmpl,
+#     density=0.015, biome_filter="alpine", seed=43,
+# )
+#
+# Biome filters: "grass" (forest+meadow), "meadow", "forest", "stone",
+# "alpine", "snow", "shore", "any". Filters key off the per-vertex `Col`
+# attribute that make_eroded_terrain writes — they don't work on plain
+# make_terrain output.
+#
+# Density is points per BU² of eligible surface (the band selected by
+# biome_filter). Realistic ranges:
+#   trees on grass     : 0.003 - 0.010
+#   boulders on alpine : 0.010 - 0.025
+#   dense forest patch : 0.020 - 0.040
+# Density × area > 5000 produces enough geometry to slow Cycles AND
+# blow up the OBJ file size — keep it bounded.
 
 # 2. Spawn assets via factories.
 #    Pattern: f = FactoryClass(factory_seed=N, archetype="...")
@@ -150,13 +242,41 @@ missing) and CONTINUE building the scene. Do not refuse to build.
 ### Camera framing
 
 Use `cam.data.lens = 35` for wide scene shots and `lens = 50` for tight
-prop shots. For oblique-aerial scene views the camera at `(20, -22, 13)`
-looking at `(0, 0, 1.5)` is a good default for a 16-30m wide scene.
+prop shots. For an oblique-aerial scene view of a size=80 (160 BU wide)
+world, the camera at `(40, -44, 26)` looking at `(0, 0, 3)` frames the
+full scene cleanly. Scale linearly with terrain size if you change it.
 
 ---
 
 ## Factories
 
+
+### `LowPolyBoulderFactory`
+
+LowPolyBoulderFactory — Maquette wrapper for upstream BoulderFactory.
+
+**Constructor parameters:**
+```
+factory_seed
+target_face_size: float | None = None
+polygon_multiplier: float = 1.0
+decimate_ratio: float | None = None
+palette_color: str | None = 'rock_warm'
+```
+
+### `LowPolyTreeFactory`
+
+LowPolyTreeFactory — bare-trunk Firewatch silhouette.
+
+**Constructor parameters:**
+```
+factory_seed
+season: str | None = None
+species: str = 'pine'
+target_face_size: float = 0.15
+target_polys: int = 1200
+palette_color: str | None = None
+```
 
 ### `LowPolyBannerFactory`
 
@@ -409,6 +529,26 @@ hay_color: str | None = None
 cap_color: str | None = None
 ```
 
+### `LowPolyHitchingPostFactory`
+
+LowPolyHitchingPostFactory — wild-west / stable hitching rail.
+
+**hitching** archetypes: `single_rail` / `double_rail`
+
+**Constructor parameters:**
+```
+factory_seed
+hitching_archetype: str = 'single_rail'
+rail_length: float | None = None
+post_height: float | None = None
+post_size: float | None = None
+rail_height: float | None = None
+rail_thickness: float | None = None
+n_rails: int | None = None
+wood_color: str | None = None
+hardware_color: str | None = None
+```
+
 ### `LowPolyLanternPostFactory`
 
 LowPolyLanternPostFactory — exterior lantern post / brazier.
@@ -427,6 +567,28 @@ lamp_size: float | None = None
 lamp_archetype: str | None = None
 post_color: str | None = None
 lamp_color: str | None = None
+```
+
+### `LowPolyMushroomFactory`
+
+LowPolyMushroomFactory — fairy / forest / enchanted mushroom prop.
+
+**mushroom** archetypes: `toadstool` / `glowcap` / `cluster`
+
+**Constructor parameters:**
+```
+factory_seed
+mushroom_archetype: str = 'toadstool'
+cap_radius: float | None = None
+cap_height: float | None = None
+stem_radius: float | None = None
+stem_height: float | None = None
+n_spots: int | None = None
+spot_radius: float | None = None
+cap_color: str | None = None
+stem_color: str | None = None
+spot_color: str | None = None
+polygon_multiplier: float = 1.0
 ```
 
 ### `LowPolyPalmTreeFactory`
@@ -483,6 +645,28 @@ cap_height: float | None = None
 pointed_top: bool | None = None
 rock_color: str | None = None
 cap_color: str | None = None
+```
+
+### `LowPolySignageFactory`
+
+LowPolySignageFactory — painted wooden storefront sign.
+
+**signage** archetypes: `hanging_shingle` / `wall_plank` / `free_standing`
+
+**Constructor parameters:**
+```
+factory_seed
+signage_archetype: str = 'hanging_shingle'
+post_height: float | None = None
+post_size: float | None = None
+board_w: float | None = None
+board_h: float | None = None
+board_thickness: float | None = None
+bracket_length: float | None = None
+bracket_thickness: float | None = None
+wood_color: str | None = None
+board_color: str | None = None
+accent_color: str | None = None
 ```
 
 ### `LowPolyStallFactory`
@@ -694,6 +878,30 @@ polygon_multiplier: float = 1.0
 target_edge: float | None = None
 n_segments: int | None = None
 water_color: str | None = None
+```
+
+### `LowPolyWaterTowerFactory`
+
+LowPolyWaterTowerFactory — frontier water tower on stilts.
+
+**tower** archetypes: `frontier_stilts` / `rail_depot`
+
+**Constructor parameters:**
+```
+factory_seed
+tower_archetype: str = 'frontier_stilts'
+leg_height: float | None = None
+leg_size: float | None = None
+leg_spread: float | None = None
+tank_radius: float | None = None
+tank_height: float | None = None
+tank_n_sides: int | None = None
+roof_height: float | None = None
+n_braces: int | None = None
+brace_size: float | None = None
+leg_color: str | None = None
+tank_color: str | None = None
+roof_color: str | None = None
 ```
 
 ### `LowPolyWellFactory`
