@@ -81,6 +81,15 @@ def checkpoint(phase_name: str) -> str | None:
                 filepath=str(obj_path),
                 export_selected_objects=True,
                 export_materials=True,
+                # Write per-vertex colors as ``v X Y Z R G B`` lines so
+                # the eroded-terrain biome attribute survives the round
+                # trip to Three.js. Without this every vertex-color-
+                # driven material in the scene degrades to its
+                # static Principled BSDF Base Color in the MTL — which
+                # for the eroded terrain is the unset 0.8 0.8 0.8
+                # default and reads as "plain grey terrain" in the
+                # browser viewer.
+                export_colors=True,
                 forward_axis="NEGATIVE_Z",
                 up_axis="Y",
             )
