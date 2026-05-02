@@ -51,6 +51,14 @@ prompt and writes the render to `$MAQUETTE_OUT_DIR/scene.png` and a
 
 CRITICAL RULES:
 
+0. THE GROUND. The very first scene-content line after the wipe MUST be
+   `terrain = make_terrain(...)` (or one of `make_multi_biome_terrain`,
+   `make_eroded_terrain`). Never call `bpy.ops.mesh.primitive_plane_add`
+   to create the ground — a bare plane reads as a flat untextured
+   sheet and is rejected by the runtime lint. The terrain helper
+   produces a displaced mesh + a ``height_at(x, y)`` sampler you use
+   for every later object placement.
+
 1. Output ONLY the Python script. No commentary before or after.
    Wrap the entire script in a ```python ... ``` fenced code block.
    Do not include any thinking or planning text outside the block.
