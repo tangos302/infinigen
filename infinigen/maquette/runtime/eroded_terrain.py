@@ -709,7 +709,7 @@ def make_eroded_terrain(
     water_thickness: float = 0.4,
     water_min_area_cells: int = 12,
     water_low_poly_shader: bool = True,
-    target_verts: int | None = 12000,
+    target_verts: int | None = 32000,
     realistic_textures: bool | None = None,
     bake_for_export: bool | None = None,
     bake_resolution: int = 1024,
@@ -744,12 +744,18 @@ def make_eroded_terrain(
         use the shared low-poly water recipe; when False they use a
         simple alpha-blend Principled BSDF parameterised by
         ``water_color``.
-      * ``target_verts`` — post-build DECIMATE target. Default 12000
-        keeps the ground browser-friendly after GLB export
-        (resolution=256 builds a 65k-vert mesh). Pass ``None`` to
-        skip decimation. Vertex colors are preserved through the
-        COLLAPSE decimator so biome-driven scatter still works on
-        the decimated mesh.
+      * ``target_verts`` — post-build DECIMATE target. Default 32000.
+        Sourced from a 256² (65k-vert) grid, so 32k keeps roughly
+        half the topology — enough density that hill silhouettes
+        read as smooth rather than faceted at typical camera
+        distances, while staying small enough that GLB downloads
+        for the browser viewer remain ~3-5 MB after Draco compress.
+        Pass ``None`` to skip decimation entirely (max detail; only
+        do this for hero renders that don't ship to the viewer).
+        Was 12000 pre-2026-05; bumped after users called out
+        terrain reading as "too few polygons" on wide vistas.
+        Vertex colors are preserved through the COLLAPSE decimator
+        so biome-driven scatter still works on the decimated mesh.
       * ``realistic_textures`` — when True, replace the flat
         vertex-color material with a PBR shader that blends 5
         Polyhaven CC0 texture sets (grass / forest / rock / snow /

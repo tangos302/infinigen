@@ -77,24 +77,24 @@ from infinigen.maquette.factories_realistic import (
 # implementations and the only procedural source we have. Mixing them
 # alongside realistic vegetation is the v1 trade-off — aesthetic
 # mismatch is mild since the LowPoly* assets are silhouette-clean.
-from infinigen.maquette.factories.native.house import LowPolyHouseFactory
+from infinigen.maquette.factories.native.building import LowPolyHouseFactory
 from infinigen.maquette.factories.native.water_tower import LowPolyWaterTowerFactory
-from infinigen.maquette.factories.well import LowPolyWellFactory
-from infinigen.maquette.factories.windmill import LowPolyWindmillFactory
-from infinigen.maquette.factories.suspension_bridge import LowPolySuspensionBridgeFactory
-from infinigen.maquette.factories.cable_car import LowPolyCableCarFactory
-from infinigen.maquette.factories.deck import LowPolyDeckFactory
-from infinigen.maquette.factories.torii import LowPolyToriiFactory
-from infinigen.maquette.factories.tombstone import LowPolyTombstoneFactory
-from infinigen.maquette.factories.stall import LowPolyStallFactory
-from infinigen.maquette.factories.fence import LowPolyFenceFactory
-from infinigen.maquette.factories.lantern_post import LowPolyLanternPostFactory
-from infinigen.maquette.factories.banner import LowPolyBannerFactory
-from infinigen.maquette.factories.boat import LowPolyBoatFactory
-from infinigen.maquette.factories.wagon import LowPolyWagonFactory
-from infinigen.maquette.factories.barrel import LowPolyBarrelFactory
-from infinigen.maquette.factories.crate import LowPolyCrateFactory
-from infinigen.maquette.factories.haystack import LowPolyHaystackFactory
+from infinigen.maquette.factories.native.well import LowPolyWellFactory
+from infinigen.maquette.factories.native.windmill import LowPolyWindmillFactory
+from infinigen.maquette.factories.native.suspension_bridge import LowPolySuspensionBridgeFactory
+from infinigen.maquette.factories.native.cable_car import LowPolyCableCarFactory
+from infinigen.maquette.factories.native.deck import LowPolyDeckFactory
+from infinigen.maquette.factories.native.torii import LowPolyToriiFactory
+from infinigen.maquette.factories.native.tombstone import LowPolyTombstoneFactory
+from infinigen.maquette.factories.native.stall import LowPolyStallFactory
+from infinigen.maquette.factories.native.fence import LowPolyFenceFactory
+from infinigen.maquette.factories.native.lantern_post import LowPolyLanternPostFactory
+from infinigen.maquette.factories.native.banner import LowPolyBannerFactory
+from infinigen.maquette.factories.native.boat import LowPolyBoatFactory
+from infinigen.maquette.factories.native.wagon import LowPolyWagonFactory
+from infinigen.maquette.factories.native.barrel import LowPolyBarrelFactory
+from infinigen.maquette.factories.native.crate import LowPolyCrateFactory
+from infinigen.maquette.factories.native.haystack import LowPolyHaystackFactory
 from infinigen.maquette.runtime.terrain import make_terrain
 # OR — when the prompt mixes biomes (grass + desert, forest + coast):
 # from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
@@ -115,15 +115,102 @@ terrain = make_terrain(
 # Same multi-biome / eroded helpers are available — see low-poly guide
 # for parameter recipes. They are mode-agnostic.
 
-# 1b. Scatter foliage / boulders / grass on the terrain via Geometry Nodes.
-#     IMPORTANT: realistic-mode TreeFactory has a hard upstream limit at
-#     ~5 spawns per script (twig collection generation chokes Blender).
-#     For forests, ALWAYS use scatter_template — spawn ONE tree, scatter
-#     it as instanced geometry. Same applies to dense grass / flowers.
-# from infinigen.maquette.runtime.realistic_scatter import scatter_template
+# REALISTIC-MODE TERRAIN (when using make_eroded_terrain): turn on the
+# PBR shader + bake-for-export so the GLB ships actual textures
+# instead of a flat fallback. The kwargs cost ~5s combined and produce
+# a browser-ready terrain GLB:
 #
+#   from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
+#   terrain = make_eroded_terrain(
+#       size=140, seed=<seed>, peaks=[...], troughs=[...],
+#       realistic_textures=True,    # PBR shader (5 biome textures + box projection)
+#       bake_for_export=True,       # bake to flat textures so glTF embeds them
+#       bake_resolution=1024,       # 1k = ~6.7 MB GLB; 2048 for hero shots only
+#   )
+#
+# If a build script for realistic mode forgets these flags the .blend
+# render still looks right (Cycles handles procedural shaders), but
+# the browser GLB ends up greyscale because procedural Voronoi +
+# splat blends don't survive export_scene.gltf. Don't ship without them.
+
+# LOADED CC0 ASSETS — large variety pool of pre-modeled low-poly
+# buildings, trees, rocks, and plants from CC0 packs (Kenney "Retro
+# Medieval Kit" and "Nature Kit" via OpenGameArt). Use these when the
+# scene needs visual variety beyond what the procedural factories give:
+#
+#   from infinigen.maquette.runtime.loaded_factory import (
+#       LoadedMedievalFactory,   # 105 archetypes: walls, towers, columns,
+#                                # docks, fences, barrels, ladders, roofs
+#       LoadedTreeFactory,       # 61 archetypes: tree variants × season
+#                                # (default/dark/fall) × shape (cone/blocks)
+#       LoadedRockFactory,       # 30 archetypes: rock_largeA..F + smallA..H
+#       LoadedPlantFactory,      # 28 archetypes: plant_*, flower_*,
+#                                # mushroom_*, grass_*, lily_*
+#   )
+#
+#   # List archetypes for a category:
+#   LoadedMedievalFactory.archetypes()
+#
+#   # Spawn one (interface matches every other factory in the catalog):
+#   f = LoadedTreeFactory(archetype="tree_cone_dark", factory_seed=1, scale=2.5)
+#   f.spawn_asset(i=0, loc=(x, y, terrain.height_at(x, y)))
+#
+#   # archetype=None rolls a random archetype seeded by factory_seed —
+#   # cheapest way to get a varied stand of trees:
+#   for k in range(20):
+#       LoadedTreeFactory(factory_seed=k+1, scale=2.5).spawn_asset(
+#           i=k, loc=(x, y, terrain.height_at(x, y)))
+#
+# Spawned objects share mesh data via ``object.copy()`` so 100 trees of
+# the same archetype don't bloat the .blend. They ship at low poly
+# count already (~200-500 verts each) — no decimate hook needed.
+
+# CARVING PATHS / ROADS through the eroded terrain — use carve_path so
+# a stone trail or plaza sits on a flat corridor rather than bobbing
+# over the natural micro-relief:
+#
+#   from infinigen.maquette.runtime.eroded_terrain import carve_path
+#   carve_path(
+#       terrain,
+#       waypoints=[(-50, -30), (-20, -10), (5, 5), (30, 25)],
+#       width=3.0,        # full corridor width in BU
+#       blend=2.0,        # feather distance back to natural surface
+#       depth=-0.05,      # 0 = flat at surface; -0.05 = recessed track
+#   )
+#   # Subsequent terrain.height_at(x, y) calls return the carved heights.
+
+# 1b. Scatter foliage / boulders / grass on the terrain via Geometry Nodes.
+#     IMPORTANT: RealisticTreeFactory has a seed-dependent upstream bug.
+#     Some genome seeds silently kill the script after twig-collection
+#     generation. ALWAYS use `factory_seed=1` for the tree template;
+#     other seeds (42, 4811) are known-bad. Use scatter helpers for
+#     any forest — never spawn more than ONE RealisticTreeFactory.
+#
+# Two scatter helpers:
+#   scatter_template(...)               — GN-based, free polycount,
+#                                          for ground cover (grass).
+#   scatter_template_with_keepout(...)  — Python-side, slower but
+#                                          respects keep-out radii so
+#                                          scatter doesn't collide with
+#                                          buildings / wells / walls.
+#                                          USE FOR TREES + LARGE PROPS.
+# from infinigen.maquette.runtime.realistic_scatter import (
+#     scatter_template, scatter_template_with_keepout,
+# )
+#
+# # factory_seed=1 is the canonical safe seed; do not use other seeds
+# # for trees unless you've verified them.
 # tree_tmpl = RealisticTreeFactory(factory_seed=1, archetype="summer").spawn_asset(
 #     i=1, loc=(0, 0, 0))
+# # Pass landmark positions as keep-out so trees don't grow inside cottages.
+# scatter_template_with_keepout(
+#     terrain=terrain, template=tree_tmpl, density=0.005,
+#     keep_out=[(cx, cy, 4.0) for (cx, cy, _) in cottage_spots]
+#              + [(0, 0, 3.0)]   # keep-out for the central well too
+#              + [(tx, ty, 5.0)] # tower at (tx, ty)
+#     ,
+#     seed=1,
+# )
 # scatter_template(
 #     terrain=terrain, template=tree_tmpl,
 #     density=0.005, biome_filter="grass", seed=42,

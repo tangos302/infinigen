@@ -737,6 +737,7 @@ def build_prompt(
     debug: bool = False,
     include_categories: list[str] | None = None,
     mode: str = "low_poly",
+    map_size: str = "large",
 ) -> str:
     """Assemble the full prompt: system instructions + factory catalog +
     canonical example + user prompt + optional reference image attachments.
@@ -818,12 +819,14 @@ def build_prompt(
         mode_block = f"## MODE: {mode}\n\nFollow the realistic-mode catalog below.\n\n"
 
     terrain_block = _terrain_recommendation_block(user_prompt, mode=mode)
+    scene_brief_block = _scene_brief_block(map_size)
 
     return (
         f"{_SYSTEM_PROMPT}\n\n"
         f"{mode_block}"
         f"## Factory catalog\n\n{guide}\n\n"
         f"{terrain_block}"
+        f"{scene_brief_block}"
         f"{example_block}"
         f"{image_block}"
         f"{debug_block}"
@@ -831,6 +834,180 @@ def build_prompt(
         f"## YOUR TASK\n\n"
         f"User prompt: {user_prompt.strip() or '(blank — let the reference image(s) drive the build)'}\n\n"
         f"Generate the build script."
+    )
+
+
+def _scene_brief_block(map_size: str) -> str:
+    """Hero count + path requirements injected as a 'scene brief'.
+
+    Hero count maps directly off ``map_size``: small = 1, medium = 2,
+    large = 3. The path requirement is unconditional — the scene must
+    feel walkable to a player — unless the user prompt explicitly says
+    otherwise (e.g. "wild untouched valley"). Claude is told to read
+    the prompt for that opt-out.
+    """
+    size = (map_size or "large").strip().lower()
+    hero_count = {"small": 1, "medium": 2, "large": 3, "xl": 4}.get(size, 3)
+    if hero_count == 1:
+        hero_phrasing = (
+            "exactly **one hero landmark** — a single major structure or "
+            "natural feature. Tag it as the primary "
+            "(`# HERO: primary — ...`). Don't add a second hero; let "
+            "the surrounding scatter (trees, rocks, props) carry the "
+            "supporting weight.\n\n"
+            "**Primary placement (1-hero scenes):** pick a quadrant "
+            "from the table below using a deterministic per-prompt pick "
+            "(e.g. `random.Random(SEED).choice(...)`); do NOT default "
+            "to (0, 0). The hero must NOT sit within 6 BU of the world "
+            "origin."
+        )
+    elif hero_count == 2:
+        hero_phrasing = (
+            "**two hero landmarks** — one **primary** (the largest, the "
+            "silhouette the camera frames) and one **supporting** "
+            "(smaller, off-axis, complementary). Tag both with "
+            "`# HERO: primary — ...` and `# HERO: supporting — ...`.\n\n"
+            "**Placement (2-hero scenes):** place primary in one quadrant "
+            "and supporting in a *different* one. Their XY distance "
+            "must be ≥ 18 BU. Don't cluster them on top of each other; "
+            "don't both sit near the world origin."
+        )
+    elif hero_count == 3:
+        hero_phrasing = (
+            "**three hero landmarks** — one **primary** (the biggest, "
+            "the silhouette the camera frames first) plus **two "
+            "supporting** landmarks that share the world. Primary is "
+            "roughly twice the silhouette area of either supporting. "
+            "Tag them: `# HERO: primary — ...`, `# HERO: supporting — ...` "
+            "(twice).\n\n"
+            "**Placement (3-hero scenes):** all three heroes must occupy "
+            "**different quadrants** of the map. **Pairwise XY distance "
+            "must be ≥ 18 BU** for every pair. The primary is NOT "
+            "required to be near the center — vary placement scene-to-"
+            "scene so consecutive runs don't all look the same. Examples: "
+            "(a) primary in NE, supporting in SW + W; "
+            "(b) primary in S, supporting in N + E; "
+            "(c) primary in NW, supporting in SE + center.\n\n"
+            "**Camera framing for 3-hero scenes:** target the *centroid* "
+            "of the three heroes (`((px+s1x+s2x)/3, (py+s1y+s2y)/3, ...)`), "
+            "NOT just the primary's position. Pull the camera back far "
+            "enough that all three heroes project inside the frame "
+            "(camera distance ≥ 1.6× the diameter of the hero triangle). "
+            "Use a 28-30 mm lens for wide multi-hero scenes (`cam.data.lens"
+            " = 28`) instead of the default 35 mm — the wider FOV lets "
+            "all three read as distinct beats."
+        )
+    else:  # xl, future
+        hero_phrasing = (
+            "**four+ hero landmarks** — one primary plus three or more "
+            "supporting landmarks scattered across the map. Treat the "
+            "scene as a small region with multiple settlements / vistas. "
+            "Tag each in comments: `# HERO: primary — ...`, "
+            "`# HERO: supporting — ...`. All heroes occupy distinct "
+            "quadrants, pairwise XY distance ≥ 16 BU. Camera targets "
+            "the heroes' centroid; lens 24-28 mm."
+        )
+
+    # Quadrant table — appears once per brief regardless of hero count.
+    # Coordinates are world XY, sized for the default 80 BU half-extent
+    # terrain. The LLM picks ranges from each quadrant; jitter within
+    # those ranges so consecutive runs don't repeat.
+    quadrant_table = (
+        "\n\n**Hero quadrants (pick from these XY ranges):**\n"
+        "- NW: x ∈ [-55, -20], y ∈ [+15, +50]\n"
+        "- N : x ∈ [-15, +15], y ∈ [+20, +55]\n"
+        "- NE: x ∈ [+20, +55], y ∈ [+15, +50]\n"
+        "- W : x ∈ [-55, -20], y ∈ [-15, +15]\n"
+        "- C : x ∈ [-12, +12], y ∈ [-12, +12]   (use sparingly)\n"
+        "- E : x ∈ [+20, +55], y ∈ [-15, +15]\n"
+        "- SW: x ∈ [-55, -20], y ∈ [-50, -15]\n"
+        "- S : x ∈ [-15, +15], y ∈ [-55, -20]\n"
+        "- SE: x ∈ [+20, +55], y ∈ [-50, -15]\n"
+        "Pick exact coords inside each range using `rng = random.Random("
+        "SEED)` so re-runs of the same seed land in the same place but "
+        "different seeds vary."
+    )
+    hero_phrasing = hero_phrasing + quadrant_table
+    return (
+        "## SCENE BRIEF\n\n"
+        f"### Hero density\n\n"
+        f"This scene must have {hero_phrasing}\n\n"
+        "Heroes are distinct from props/scatter — a hero gets its own "
+        "factory call and explicit `place(...)` line; props live inside "
+        "scatter calls or short loops. The hero count is non-negotiable: "
+        "do not under-fill (smaller scenes feel empty) or over-fill "
+        "(more heroes than briefed crowd the camera). Tagging is "
+        "non-negotiable too — the post-build validator scans for "
+        "`# HERO: primary` / `# HERO: supporting` comment lines and "
+        "lints a count mismatch as a hard error.\n\n"
+        "### Pathing — make scenes gameable\n\n"
+        "Unless the prompt forbids it (\"wild untouched valley\", \"trackless "
+        "desert\", \"isolated peak\"), invent a coherent pedestrian path:\n\n"
+        "- **Archetype** — pick one and tag with `# PATH_ARCHETYPE: <name>`:\n"
+        "  - `stone_road` — courtyards/towns/temple approaches; carve flat "
+        "(`depth=0.0`), dress with stone-wall fence every 4–6 BU.\n"
+        "  - `dirt_trail` — wilderness/alpine/frontier; carve worn "
+        "(`depth=-0.05`), occasional bollards only.\n"
+        "  - `boardwalk` — wetlands/coastal piers; don't carve, lay wood "
+        "plane at `terrain.height_at(x,y)+0.04`, wooden_rail both sides.\n"
+        "  - `river_crossing` — bridge or two lantern posts as ford marker; "
+        "dirt-trail run-up carved (`depth=-0.03`).\n"
+        "- **Waypoints** — 3–6 world-XY points entry → hero(es), threading "
+        "saddles/shoulders/riverbanks. Adjacent heroes sit along or near "
+        "the path, not behind it. Camera-foreground entry → primary hero "
+        "is the safest default direction.\n"
+        "- **Carve** the path before placing structures so factories sample "
+        "the new height: `carve_path(terrain, [(x1,y1),(x2,y2),...], "
+        "width=2.4, depth=-0.05)` (import from "
+        "`infinigen.maquette.runtime.eroded_terrain`). Width 2.0–3.5 BU. "
+        "Skip carve for boardwalks.\n"
+        "- **Dress** with lanterns/bollards/fences every 4–8 BU, alternating "
+        "sides. Cluster barrels/crates at junctions and on the visitor-"
+        "facing side of heroes.\n"
+        "- **Orient** structures with a clear front toward the path: "
+        "`rot_z = math.atan2(path_dy, path_dx) + math.pi/2`.\n"
+        "- **Exclude scatter** from the corridor — every `scatter_on_terrain` "
+        "call must pass `exclude_polylines=path_pts, "
+        "exclude_radius=path_width * 0.7`. The helper caches the mask after "
+        "the first call.\n"
+        "- **Player spawn** — add an empty (`bpy.ops.object.empty_add(...)`) "
+        "named exactly `Player_Spawn` at the first waypoint, "
+        "Z = `terrain.height_at(x0,y0)+0.05`, rotated along the next-segment "
+        "vector. Future Play mode reads this empty.\n\n"
+        "If the prompt genuinely forbids a path, leave a `# NO_PATH: "
+        "<reason>` comment so the validator skips the missing-path lint.\n\n"
+        "### Foreground anchor — silhouette grounding\n\n"
+        "Place at least one chunky prop within ~5 BU of the camera (boulder, "
+        "fence post, broken cart, tree stump, half-buried statue, lantern, "
+        "barrel cluster). Slightly off-center so it doesn't block the hero. "
+        "Tag with `# FOREGROUND_ANCHOR: <kind>`.\n\n"
+        "### Camera framing\n\n"
+        "Primary hero's center must land within the central 60% of the frame "
+        "(NDC ~[-0.6, +0.6]) in both axes. Aim with: "
+        "`cam.rotation_euler = (primary_pos - cam_pos).to_track_quat('-Z', "
+        "'Y').to_euler()` where `primary_pos = Vector((hx, hy, hz + "
+        "hero_h*0.5))`. Use the primary hero's center as target unless the "
+        "composition genuinely needs otherwise.\n\n"
+        "### Time of day\n\n"
+        "Pick one and tag with `# TIME_OF_DAY: <choice>`, then call "
+        "`set_time_of_day('<choice>')` (from `infinigen.maquette.runtime."
+        "composition`) after wiring the sun + world background:\n"
+        "- `dawn` — peaceful/ancient/awakening (cold blue, low pink sun)\n"
+        "- `morning` — default neutral (alpine vistas, fresh starts)\n"
+        "- `golden` — heroic/markets/fortresses (warm low sun, long shadows)\n"
+        "- `overcast` — zen/mournful/foreboding (flat cool, soft shadows)\n"
+        "- `dusk` — desert oasis / settling villages (orange/violet)\n"
+        "- `night` — lantern-lit/secretive (only when prompt asks)\n\n"
+        "### Atmospheric depth (optional)\n\n"
+        "For wide-vista scenes, call `add_aerial_perspective(strength=0.6)` "
+        "(0.4 subtle, 0.9 heavy) from `infinigen.maquette.runtime.composition` "
+        "after wiring the world. Adds Cycles volumetric scatter — softens "
+        "distant geometry, hides far-mountain triangulation seams.\n\n"
+        "### Walkable-surface markup\n\n"
+        "When you carve a path, also call "
+        "`mark_walkable(terrain.obj, kind='terrain')` (from "
+        "`infinigen.maquette.runtime.composition`); optionally tag bridge/"
+        "stair meshes too. Forward-compat for navmesh; skip if no path.\n\n"
     )
 
 
@@ -960,11 +1137,14 @@ def generate(user_prompt: str, *, model: str | None = None,
              reference_image_paths: list[Path] | None = None,
              debug: bool = False,
              include_categories: list[str] | None = None,
-             mode: str = "low_poly") -> GenerationResult:
+             mode: str = "low_poly",
+             map_size: str = "large") -> GenerationResult:
     """End-to-end: prompt → Claude → extracted script.
 
     ``mode`` selects the factory catalog: ``low_poly`` (stylized maquette,
-    default) or ``realistic`` (upstream Infinigen, post-baked to LODs)."""
+    default) or ``realistic`` (upstream Infinigen, post-baked to LODs).
+    ``map_size`` (small|medium|large|xl) drives the hero-count brief
+    injected into the prompt: 1/2/3/4 heroes respectively."""
     full_prompt = build_prompt(
         user_prompt,
         regenerate_guide=regenerate_guide,
@@ -972,6 +1152,7 @@ def generate(user_prompt: str, *, model: str | None = None,
         debug=debug,
         include_categories=include_categories,
         mode=mode,
+        map_size=map_size,
     )
     response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
     script = extract_script(response)

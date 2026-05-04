@@ -78,11 +78,17 @@ _BIOME_TESTS: dict[str, list[tuple[str, str, float]]] = {
 }
 
 
-def _build_scatter_node_tree(name: str, biome_filter: str):
+def _build_scatter_node_tree(name: str, biome_filter: str, *, use_path_mask: bool = False):
     """Construct the GN node tree. Returns a fresh `bpy.types.NodeTree`
     with sockets:
         IN  : Terrain (Object), Instance (Object), Density (Float), Seed (Int)
         OUT : Geometry  (the scattered + realised instances)
+
+    When ``use_path_mask=True`` an extra Selection clause is wired in
+    that gates distribution on a POINT-domain ``path_mask_keep`` float
+    attribute on the terrain (1.0 = scatter allowed, 0.0 = corridor
+    excluded). The caller is expected to write that attribute via
+    :func:`bake_path_mask` before triggering depsgraph eval.
     """
     import bpy
 
@@ -177,6 +183,32 @@ def _build_scatter_node_tree(name: str, biome_filter: str):
             links.new(cmp.outputs["Result"], and_node.inputs[1])
             selection_socket = and_node.outputs["Boolean"]
 
+    # Optional path-corridor mask: AND the existing biome selection with
+    # `path_mask_keep > 0.5`. Vertex attribute is written by
+    # bake_path_mask() before scatter; when missing the named-attribute
+    # node returns 0.0, which would block all scatter — so we only wire
+    # the clause when use_path_mask is true.
+    if use_path_mask:
+        path_attr = nodes.new("GeometryNodeInputNamedAttribute")
+        path_attr.data_type = "FLOAT"
+        path_attr.inputs["Name"].default_value = "path_mask_keep"
+        path_attr.location = (-1100, -300)
+        path_cmp = nodes.new("FunctionNodeCompare")
+        path_cmp.data_type = "FLOAT"
+        path_cmp.operation = "GREATER_THAN"
+        path_cmp.location = (-700, last_y - 200)
+        links.new(path_attr.outputs["Attribute"], path_cmp.inputs[0])
+        path_cmp.inputs[1].default_value = 0.5
+        if selection_socket is None:
+            selection_socket = path_cmp.outputs["Result"]
+        else:
+            and_node = nodes.new("FunctionNodeBooleanMath")
+            and_node.operation = "AND"
+            and_node.location = (-500, last_y - 200)
+            links.new(selection_socket, and_node.inputs[0])
+            links.new(path_cmp.outputs["Result"], and_node.inputs[1])
+            selection_socket = and_node.outputs["Boolean"]
+
     # Distribute points on the terrain faces.
     dist = nodes.new("GeometryNodeDistributePointsOnFaces")
     dist.distribute_method = "POISSON"
@@ -235,6 +267,84 @@ def _build_scatter_node_tree(name: str, biome_filter: str):
     return nt
 
 
+def bake_path_mask(
+    terrain_obj,
+    polylines: "list[list[tuple[float, float]]] | list[tuple[float, float]]",
+    radius: float = 1.6,
+) -> None:
+    """Write a POINT-domain ``path_mask_keep`` FLOAT attribute on
+    ``terrain_obj`` that is 0.0 within ``radius`` of any segment in
+    ``polylines`` and 1.0 elsewhere.
+
+    Re-callable: calling it again with a different polyline replaces
+    the attribute. Subsequent ``scatter_on_terrain(... exclude_polylines=...)``
+    calls reuse the bake.
+
+    Parameters
+    ----------
+    terrain_obj
+        The Blender mesh object (typically ``Terrain.obj`` from
+        ``make_eroded_terrain``).
+    polylines
+        Either one polyline (``[(x,y), (x,y), ...]``) or a list of
+        polylines for branching paths. Each polyline must have ≥2
+        points; segments are linear interpolations between consecutive
+        points.
+    radius
+        Half-width in BU of the corridor to exclude. Defaults to 1.6
+        (matches a 2.4 BU path with a small buffer).
+    """
+    import bpy
+    import numpy as np
+
+    me = terrain_obj.data
+    n = len(me.vertices)
+    if n == 0:
+        return
+
+    pts = np.empty((n, 3), dtype=np.float32)
+    me.vertices.foreach_get("co", pts.reshape(-1))
+    px = pts[:, 0]
+    py = pts[:, 1]
+
+    # Normalize input to a list of polylines.
+    if polylines and isinstance(polylines[0], (tuple, list)) and len(polylines[0]) == 2 and not isinstance(polylines[0][0], (tuple, list)):
+        polys = [polylines]
+    else:
+        polys = list(polylines)
+
+    min_dist = np.full(n, np.inf, dtype=np.float32)
+    for poly in polys:
+        pl = list(poly)
+        if len(pl) < 2:
+            continue
+        for k in range(len(pl) - 1):
+            ax, ay = float(pl[k][0]), float(pl[k][1])
+            bx, by = float(pl[k + 1][0]), float(pl[k + 1][1])
+            seg_dx = bx - ax
+            seg_dy = by - ay
+            seg_len2 = seg_dx * seg_dx + seg_dy * seg_dy
+            if seg_len2 < 1e-9:
+                d = np.sqrt((px - ax) ** 2 + (py - ay) ** 2)
+            else:
+                t = ((px - ax) * seg_dx + (py - ay) * seg_dy) / seg_len2
+                t = np.clip(t, 0.0, 1.0)
+                cx = ax + t * seg_dx
+                cy = ay + t * seg_dy
+                d = np.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+            np.minimum(min_dist, d, out=min_dist)
+
+    keep = (min_dist > float(radius)).astype(np.float32)
+
+    # Replace any prior attribute by name. Domain=POINT so the GN tree's
+    # Distribute node interpolates correctly when consuming it.
+    if "path_mask_keep" in me.attributes:
+        me.attributes.remove(me.attributes["path_mask_keep"])
+    attr = me.attributes.new(name="path_mask_keep", type="FLOAT", domain="POINT")
+    attr.data.foreach_set("value", keep.tolist())
+    me.update()
+
+
 def scatter_on_terrain(
     *,
     terrain_obj,
@@ -245,6 +355,8 @@ def scatter_on_terrain(
     scale_jitter: tuple[float, float] = (0.85, 1.15),
     name: str | None = None,
     hide_instance_template: bool = True,
+    exclude_polylines: "list[list[tuple[float, float]]] | list[tuple[float, float]] | None" = None,
+    exclude_radius: float = 1.6,
 ):
     """Scatter copies of ``instance_obj`` onto the surface of
     ``terrain_obj``, density-modulated by the terrain's ``Col`` biome
@@ -292,14 +404,32 @@ def scatter_on_terrain(
         wiring it. The GN scatter still references it via Object Info,
         but the lone template otherwise sits at the world origin and
         photobombs the render.
+    exclude_polylines
+        Optional list of polylines (each polyline = list of (x, y)
+        waypoints) defining path corridors that scatter must avoid.
+        When provided, the helper bakes a per-vertex ``path_mask_keep``
+        attribute on ``terrain_obj`` (1.0 outside the corridor, 0.0
+        inside) and the GN selection AND-s with that mask. Multiple
+        scatter calls share the same baked mask, so pass it once on
+        the first scatter and re-use across subsequent calls.
+    exclude_radius
+        Half-width of the corridor to exclude. Defaults to 1.6 BU
+        (suits a 2.4 BU path with a small buffer).
     """
     import bpy
 
     name = name or f"Scatter_{biome_filter}"
 
+    # If the caller supplied a path corridor, bake the mask attribute on
+    # the terrain *now* so the GN tree can read it. Cheap if the mask
+    # already exists with the same parameters.
+    use_path_mask = exclude_polylines is not None
+    if use_path_mask:
+        bake_path_mask(terrain_obj, exclude_polylines, radius=exclude_radius)
+
     # Build the node-tree (one tree per scatter call — they're cheap and
     # keeping them separate avoids modifier-stacking surprises).
-    nt = _build_scatter_node_tree(f"NT_{name}", biome_filter)
+    nt = _build_scatter_node_tree(f"NT_{name}", biome_filter, use_path_mask=use_path_mask)
 
     # Empty mesh as the scatter object's data — the GN modifier produces
     # the actual geometry when the depsgraph evaluates.
