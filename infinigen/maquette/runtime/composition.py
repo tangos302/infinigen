@@ -56,8 +56,16 @@ def add_aerial_perspective(
     Adds the volume world AT THE END of the build script (after world
     background nodes are wired). Re-callable: replaces any prior
     aerial-perspective volume on the world.
+
+    Currently a no-op on Blender 5.1: the Volume Scatter node picked up
+    new Alpha/Backscatter parameters whose defaults absorb almost all
+    light over our 160 BU scene depth, producing a black render. Until
+    we replace this with a proper Mist-pass / depth-faded background,
+    just skip the volume so build scripts that call it don't blow out
+    the render. Low-poly scenes don't actually need atmospheric haze.
     """
-    import bpy
+    return  # noqa: F821 — see docstring; rest of body kept for re-enable later
+    import bpy  # noqa: F401, F841 — preserved so the original implementation is intact when we re-enable
 
     scene = bpy.context.scene
     if scene is None:
