@@ -308,6 +308,7 @@ def make_multi_biome_terrain(
     falloff: float = 1.0,
     resolution: int = 128,
     smooth_shading: bool = True,
+    composition=None,
 ) -> Terrain:
     """Build a ground mesh that smoothly blends multiple biome heights and
     splits color regions per-face by dominant zone.
@@ -392,13 +393,55 @@ def make_multi_biome_terrain(
 
     # Build the grid mesh. Per-axis vertex count = resolution + 1.
     res = max(8, int(resolution))
+    # Precompute the heightmap on a numpy grid so a Composition can
+    # reshape it (hero plateaus / path saddles / water basin) before
+    # mesh creation. Sampling the per-vertex height_at into a numpy
+    # array first is also cheaper than the python double-loop the
+    # previous code path used.
+    import numpy as _np
+    coords = _np.linspace(-float(size), float(size), res + 1, dtype=_np.float32)
+    Xg, Yg = _np.meshgrid(coords, coords)
+    H_grid = _np.zeros_like(Xg, dtype=_np.float32)
+    for j in range(res + 1):
+        for i in range(res + 1):
+            H_grid[j, i] = height_at(float(Xg[j, i]), float(Yg[j, i]))
+
+    if composition is not None:
+        from infinigen.maquette.runtime import influence as _infl
+        # Sample the pre-composition grid for hero target_z fallbacks.
+        _H_pre = H_grid.copy()
+        _half = float(size)
+        _N = res + 1
+
+        def _pre_sample(x: float, y: float) -> float:
+            fi = (x + _half) / (2.0 * _half) * (_N - 1)
+            fj = (y + _half) / (2.0 * _half) * (_N - 1)
+            i = int(min(max(round(fi), 0), _N - 1))
+            j = int(min(max(round(fj), 0), _N - 1))
+            return float(_H_pre[j, i])
+
+        H_grid = _infl.apply_composition(H_grid, Xg, Yg, composition, _pre_sample)
+        # Replace height_at so downstream object placement reads the
+        # post-composition surface (so factories sample the actual
+        # plateaus / saddles, not the pre-shape biome blend).
+        _half2 = float(size)
+
+        def _post_sample(x: float, y: float) -> float:
+            fi = (x + _half2) / (2.0 * _half2) * (_N - 1)
+            fj = (y + _half2) / (2.0 * _half2) * (_N - 1)
+            i = int(min(max(round(fi), 0), _N - 1))
+            j = int(min(max(round(fj), 0), _N - 1))
+            return float(H_grid[j, i])
+        height_at = _post_sample  # noqa: F841 — closure rebound
+        print(f"[multi_biome] composition applied "
+              f"(heroes={len(composition.heroes)}, paths={len(composition.paths)}, "
+              f"water={'yes' if composition.water else 'no'})")
+
     verts: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int, int]] = []
     for j in range(res + 1):
         for i in range(res + 1):
-            x = -size + 2.0 * size * i / res
-            y = -size + 2.0 * size * j / res
-            verts.append((x, y, height_at(x, y)))
+            verts.append((float(Xg[j, i]), float(Yg[j, i]), float(H_grid[j, i])))
     for j in range(res):
         for i in range(res):
             a = j * (res + 1) + i

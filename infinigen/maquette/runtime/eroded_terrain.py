@@ -710,6 +710,7 @@ def make_eroded_terrain(
     water_min_area_cells: int = 12,
     water_low_poly_shader: bool = True,
     target_verts: int | None = 32000,
+    composition=None,
     realistic_textures: bool | None = None,
     bake_for_export: bool | None = None,
     bake_resolution: int = 1024,
@@ -808,6 +809,31 @@ def make_eroded_terrain(
     )
     print(f"[eroded_terrain] eroding ({erode_iters} iter, deposition={deposition:.2f})")
     H = _erode(H0, n_iter=int(erode_iters), deposition=float(deposition))
+    # Composition pass — bend the post-erosion heightmap to fit the
+    # known scene composition (hero plateaus, path saddles, water basin).
+    # See runtime/influence.py for the operators. Applied AFTER erosion
+    # so plateaus and saddles aren't washed back into noise; the LLM
+    # passes a Composition built from the same hero/path/water positions
+    # it'll use for `place(...)` calls downstream so the terrain shape
+    # matches the placement.
+    if composition is not None:
+        from infinigen.maquette.runtime import influence as _infl
+        coords = np.linspace(-float(size), float(size), int(resolution),
+                             dtype=np.float32)
+        Xg, Yg = np.meshgrid(coords, coords)
+        # Sample the eroded surface for hero target_z fallbacks: nearest-
+        # neighbour read of H against world XY → grid index.
+        def _eroded_sample(x: float, y: float) -> float:
+            res = H.shape[0]
+            fi = (x + float(size)) / (2.0 * float(size)) * (res - 1)
+            fj = (y + float(size)) / (2.0 * float(size)) * (res - 1)
+            i = int(np.clip(round(fi), 0, res - 1))
+            j = int(np.clip(round(fj), 0, res - 1))
+            return float(H[j, i])
+        H = _infl.apply_composition(H, Xg, Yg, composition, _eroded_sample)
+        print(f"[eroded_terrain] composition applied "
+              f"(heroes={len(composition.heroes)}, paths={len(composition.paths)}, "
+              f"water={'yes' if composition.water else 'no'})")
     print(f"[eroded_terrain] elevation range {H.min():.2f}..{H.max():.2f}")
     COL = _biome_colors(H, alpine, float(sea_level), palette)
 
