@@ -45,9 +45,11 @@ class Hero:
 
 
 @dataclass
-class Path:
+class Pathway:
     """A walkable corridor that shapes the terrain into a saddle along
-    its polyline.
+    its polyline. Named ``Pathway`` rather than ``Path`` to avoid
+    shadowing ``pathlib.Path`` when both are imported in the build
+    script (the LLM uses ``pathlib.Path`` for output dirs).
 
     ``width`` is the full corridor width in BU. Heights inside the
     corridor are interpolated linearly along the polyline from the
