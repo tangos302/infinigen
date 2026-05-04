@@ -94,7 +94,13 @@ def add_aerial_perspective(
     if color is None:
         color = (0.78, 0.84, 0.92)
     vol.inputs["Color"].default_value = (color[0], color[1], color[2], 1.0)
-    vol.inputs["Density"].default_value = max(0.0, float(strength) * 0.06)
+    # Density is in per-BU absorption, applied over the unbounded world
+    # volume. The 160 BU scene depth means camera→hero is ~80 BU; at the
+    # old 0.06 coefficient, strength=0.6 → density=0.036 → 94% absorption
+    # over that distance → black render. Scaled 10× lower so the effect
+    # reads as subtle aerial haze on distant geometry without blacking
+    # out the foreground. For multi-km landscapes bump back up.
+    vol.inputs["Density"].default_value = max(0.0, float(strength) * 0.006)
 
     links.new(vol.outputs["Volume"], out_node.inputs["Volume"])
 
