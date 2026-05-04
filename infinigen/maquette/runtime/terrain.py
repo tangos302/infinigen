@@ -195,7 +195,7 @@ def make_terrain(
     base_color: tuple[float, float, float, float] = (0.42, 0.50, 0.30, 1.0),
     seed: int = 0,
     extra_amp_scale: float = 1.0,
-    resolution: int = 64,
+    resolution: int = 128,
     smooth_shading: bool = True,
 ) -> Terrain:
     """Build a ground mesh of size ``2*size BU`` and return it plus a
@@ -204,8 +204,9 @@ def make_terrain(
     ``style`` picks a preset (see module docstring). Unknown styles fall
     back to ``flat`` so a typo doesn't crash the build script.
 
-    ``resolution`` is the per-axis vertex count; 64 → 4k verts, plenty
-    for low-poly silhouettes without making the OBJ huge.
+    ``resolution`` is the per-axis vertex count; default 128 → 16k verts.
+    Was 64 (4k) but dunes / rolling styles read as faceted at that
+    density; 128 keeps OBJs small while letting the silhouette curve.
     """
     import bpy
 
@@ -305,7 +306,7 @@ def make_multi_biome_terrain(
     zones: Sequence[Zone],
     seed: int = 0,
     falloff: float = 1.0,
-    resolution: int = 80,
+    resolution: int = 128,
     smooth_shading: bool = True,
 ) -> Terrain:
     """Build a ground mesh that smoothly blends multiple biome heights and
