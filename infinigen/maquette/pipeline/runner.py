@@ -1089,12 +1089,13 @@ _REQUESTED_LINE = re.compile(
 def extract_script(response: str) -> str:
     """Pull the Python script out of Claude's response.
 
-    Claude sometimes returns multiple ``` python ... ``` blocks — a short
-    preview / helper snippet first, then the full script. The first-match
-    behaviour was picking the preview, which left the build script
-    starting mid-call (truncated header). Pick the *longest* block as the
-    canonical script — it's reliably the full one, and falls through
-    to the bare-script heuristic when no fences exist at all.
+    Claude sometimes splits a single build script across multiple
+    ``` python ... ``` fences with narrative text between them — usually
+    when the script is long (Composition + heroes + scatter + camera).
+    Concatenate ALL python blocks in order so the assembled script has
+    its imports + first hero + path/water + remaining heroes + render.
+    Earlier "first-match" and "longest-match" behaviours both produced
+    a truncated build that started mid-function and missed heroes.
     """
     matches = list(_CODE_FENCE.finditer(response))
     if not matches:
@@ -1108,8 +1109,8 @@ def extract_script(response: str) -> str:
             "no ```python code block in Claude response and response doesn't "
             "look like a bare script. First 200 chars:\n" + stripped[:200]
         )
-    longest = max(matches, key=lambda m: len(m.group(1)))
-    return longest.group(1)
+    # Join with newlines so block boundaries don't merge two statements.
+    return "\n".join(m.group(1) for m in matches)
 
 
 def extract_requested_assets(script: str) -> list[str]:
