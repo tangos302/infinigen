@@ -1021,10 +1021,17 @@ _REQUESTED_LINE = re.compile(
 
 
 def extract_script(response: str) -> str:
-    """Pull the Python script out of Claude's response. Handles fenced
-    blocks; raises if none found."""
-    match = _CODE_FENCE.search(response)
-    if not match:
+    """Pull the Python script out of Claude's response.
+
+    Claude sometimes returns multiple ``` python ... ``` blocks — a short
+    preview / helper snippet first, then the full script. The first-match
+    behaviour was picking the preview, which left the build script
+    starting mid-call (truncated header). Pick the *longest* block as the
+    canonical script — it's reliably the full one, and falls through
+    to the bare-script heuristic when no fences exist at all.
+    """
+    matches = list(_CODE_FENCE.finditer(response))
+    if not matches:
         # Fallback: if the response *is* a Python script (no markdown), use
         # it as-is. Heuristic: starts with "import" / "from" / a docstring.
         stripped = response.strip()
@@ -1035,7 +1042,8 @@ def extract_script(response: str) -> str:
             "no ```python code block in Claude response and response doesn't "
             "look like a bare script. First 200 chars:\n" + stripped[:200]
         )
-    return match.group(1)
+    longest = max(matches, key=lambda m: len(m.group(1)))
+    return longest.group(1)
 
 
 def extract_requested_assets(script: str) -> list[str]:
