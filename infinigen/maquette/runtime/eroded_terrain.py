@@ -1021,9 +1021,17 @@ def carve_path(
     """
     import numpy as np
 
-    if terrain.heightmap is None:
-        raise ValueError("Terrain has no heightmap exposed; carve_path "
-                         "requires a make_eroded_terrain build.")
+    # Soft-fail when called against the simple make_terrain (which has no
+    # heightmap to mutate). Crashing here would lose the entire build —
+    # all object placement, scatter, camera setup — even though the path
+    # carving is the only thing that doesn't apply. Warn and return so
+    # the LLM's script still ships a viable scene; the user can rerun
+    # with a make_eroded_terrain backbone if they want the real groove.
+    if not hasattr(terrain, "heightmap") or terrain.heightmap is None:
+        print("[carve_path] terrain has no heightmap (use make_eroded_terrain "
+              "or make_multi_biome_terrain for an actual carved path); "
+              "skipping carve, scene continues.")
+        return
     pts = list(waypoints)
     if len(pts) < 2:
         raise ValueError("carve_path needs at least 2 waypoints")
