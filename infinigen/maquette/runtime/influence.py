@@ -41,7 +41,10 @@ class Hero:
     cy: float
     radius: float
     target_z: float | None = None
-    hardness: float = 2.0
+    # Default hardness 1.2 (Gaussian dome → soft cliff edges) for the
+    # painterly Sky-CotL look. 2.0 = mesa-like sharp plateau (used for
+    # fortress / monastery bases when the prompt explicitly calls for it).
+    hardness: float = 1.2
 
 
 @dataclass

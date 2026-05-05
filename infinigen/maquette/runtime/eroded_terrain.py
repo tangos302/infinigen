@@ -262,11 +262,30 @@ def _build_heightmap(
         d2 = (X - cx) ** 2 + (Y - cy) ** 2
         h += (np.exp(-d2 / (2 * sigma * sigma)) * depth).astype(np.float32)
 
-    # Domain warp — sample on the regular grid, then we'll look up the
-    # FBM stack at warped pixel coordinates.
-    warp_x = nz_warp_x.noise2array(coords / 60.0, coords / 60.0).astype(np.float32) * 22.0
-    warp_y = nz_warp_y.noise2array(coords / 60.0 + 31.0, coords / 60.0 + 31.0).astype(np.float32) * 22.0
+    # Two-pass domain warp (Inigo Quilez `warp(warp(...))` recipe) —
+    # produces non-self-similar gnarled silhouettes that read as
+    # designed rather than function-on-a-grid. Pass 1 generates a
+    # standard warp noise grid; Pass 2 looks up that grid at coords
+    # already displaced by Pass 1, via bilinear ``map_coordinates``.
+    # https://iquilezles.org/articles/warp/
     span = 2.0 * float(size)
+    q_x = nz_warp_x.noise2array(coords / 60.0, coords / 60.0).astype(np.float32)
+    q_y = nz_warp_y.noise2array(coords / 60.0 + 31.0, coords / 60.0 + 31.0).astype(np.float32)
+    # Pass-2 lookup: sample (q_x, q_y) at pixel coords displaced by
+    # the pass-1 noise. Pass-1 amplitude in pixels = noise_unit * px/BU.
+    p1_amp_px = 35.0 / span * (res - 1)  # 35 BU pass-1 displacement
+    grid_xx, grid_yy = np.meshgrid(np.arange(res, dtype=np.float32),
+                                   np.arange(res, dtype=np.float32))
+    warp_pix_x = grid_xx + q_x * p1_amp_px
+    warp_pix_y = grid_yy + q_y * p1_amp_px
+    r_x = map_coordinates(q_x, [warp_pix_y, warp_pix_x],
+                          order=1, mode="reflect").astype(np.float32)
+    r_y = map_coordinates(q_y, [warp_pix_y, warp_pix_x],
+                          order=1, mode="reflect").astype(np.float32)
+    # Final warp amplitude in BU — combines pass 1 (foundation curve)
+    # and pass 2 (gnarled detail).
+    warp_x = (q_x * 18.0 + r_x * 32.0).astype(np.float32)
+    warp_y = (q_y * 18.0 + r_y * 32.0).astype(np.float32)
 
     # Per-octave domain-warped FBM via map_coordinates (bilinear remap
     # on a regular FBM grid). This vectorizes what used to be a row x
@@ -710,23 +729,24 @@ def _write_per_face_col(mesh, col_grid, size):
     return face_rgb
 
 
-def _apply_voronoi_macro(mesh, *, scale: float = 4.0, seed: int = 0,
-                         amplitude: float = 0.04):
-    """Per-face HSV value-offset from a Voronoi cell hash.
+def _apply_painterly_hsv_macro(mesh, *, seed: int = 0):
+    """Continuous low-frequency FBM in HSV space — painterly hue+sat+val
+    drift across the terrain instead of cell-bucketed value splotches.
 
-    Each face is bucketed into a ``scale`` BU grid cell on world XY; cell
-    indices are hashed to a continuous brightness offset in ±``amplitude``.
-    Faces in the same cell share an offset, neighbouring cells get
-    different offsets. This is the "macro patch" pass that breaks the
-    "every meadow is one flat green" read into painterly variation.
+    Three independent OpenSimplex generators feed three HSV channels:
+      - Hue: ±0.015 (subtle warm/cool drift)
+      - Sat: ±10 % multiplicative
+      - Val: ±5 % multiplicative
 
-    Painterly mode uses scale=4 + amplitude=0.04 (broad soft pasture
-    tones). Was scale=12 + amplitude=0.12 in the chunky-poly era —
-    too loud for the smooth-shaded Sky CotL look.
+    Wavelengths chosen so the drift reads as broad pasture variation
+    (~30 BU half-wave), not high-frequency noise. Sky's grass shows
+    exactly this kind of continuous painterly wash — neighbouring
+    patches are different, but never quantised.
 
-    Idempotent on ``seed``.
+    Replaces the old ``_apply_voronoi_macro`` cell-hash splotches.
     """
     import numpy as np
+    from opensimplex import OpenSimplex
 
     n_polys = len(mesh.polygons)
     n_verts = len(mesh.vertices)
@@ -744,13 +764,19 @@ def _apply_voronoi_macro(mesh, *, scale: float = 4.0, seed: int = 0,
             s += verts_xy[vi]
         centroids[i] = s / max(len(poly.vertices), 1)
 
-    cx = np.floor(centroids[:, 0] / float(scale)).astype(np.int64)
-    cy = np.floor(centroids[:, 1] / float(scale)).astype(np.int64)
-    h = (cx * 73856093) ^ (cy * 19349663) ^ (int(seed) * 83492791)
-    h = (h.astype(np.float64) % 100000) / 100000.0
-    # Continuous offset in [-amplitude, +amplitude] — smooth pasture
-    # variation rather than quantised splotches.
-    offset = ((h * 2.0 - 1.0).astype(np.float32) * float(amplitude))
+    nz_h = OpenSimplex(seed=int(seed) + 11)
+    nz_s = OpenSimplex(seed=int(seed) + 12)
+    nz_v = OpenSimplex(seed=int(seed) + 13)
+
+    # Sample noise per face centroid (one-by-one — vectorisation would
+    # need a regular grid; n_polys ≤ ~40 k so the loop is fine, ~50 ms).
+    fh = np.empty(n_polys, dtype=np.float32)
+    fs = np.empty(n_polys, dtype=np.float32)
+    fv = np.empty(n_polys, dtype=np.float32)
+    for i in range(n_polys):
+        fh[i] = nz_h.noise2(centroids[i, 0] / 22.0, centroids[i, 1] / 22.0)
+        fs[i] = nz_s.noise2(centroids[i, 0] / 30.0, centroids[i, 1] / 30.0)
+        fv[i] = nz_v.noise2(centroids[i, 0] / 18.0, centroids[i, 1] / 18.0)
 
     col_attr = mesh.color_attributes.get("Col")
     if col_attr is None:
@@ -759,11 +785,26 @@ def _apply_voronoi_macro(mesh, *, scale: float = 4.0, seed: int = 0,
     col_attr.data.foreach_get("color", rgba)
     rgba = rgba.reshape(n_verts, 4)
 
+    # Per-face RGB → HSV → shift → RGB. Vectorise via matplotlib helper.
+    from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
+    face_rgb = np.empty((n_polys, 3), dtype=np.float32)
     for poly_i, poly in enumerate(mesh.polygons):
-        f = 1.0 + float(offset[poly_i])
+        face_rgb[poly_i] = rgba[poly.vertices[0], :3]
+    hsv = rgb_to_hsv(np.clip(face_rgb, 0, 1).reshape(-1, 1, 3)).reshape(-1, 3)
+    hsv[:, 0] = (hsv[:, 0] + fh * 0.015) % 1.0
+    hsv[:, 1] = np.clip(hsv[:, 1] * (1.0 + fs * 0.10), 0, 1)
+    hsv[:, 2] = np.clip(hsv[:, 2] * (1.0 + fv * 0.05), 0, 1)
+    new_rgb = hsv_to_rgb(hsv.reshape(-1, 1, 3)).reshape(-1, 3)
+
+    for poly_i, poly in enumerate(mesh.polygons):
+        c = new_rgb[poly_i]
         for vi in poly.vertices:
-            rgba[vi, :3] = np.clip(rgba[vi, :3] * f, 0, 1)
+            rgba[vi, :3] = c
     col_attr.data.foreach_set("color", rgba.flatten())
+
+
+# Legacy alias — call sites use ``_apply_voronoi_macro``; keep working.
+_apply_voronoi_macro = _apply_painterly_hsv_macro
 
 
 def _bake_ao_to_col(obj, mesh, *, samples: int = 8, distance: float = 4.0):
@@ -848,23 +889,27 @@ def _bake_ao_to_col(obj, mesh, *, samples: int = 8, distance: float = 4.0):
 
 
 def _decimate_terrain(obj, target_verts: int) -> None:
-    """COLLAPSE-decimate the terrain mesh to ~target_verts.
+    """PLANAR-decimate the terrain mesh, preserving silhouette ridges.
 
-    Vertex colors (the ``Col`` FLOAT_COLOR attribute that drives biome
-    scatter) are preserved through the collapse. We don't iterate to a
-    floor like polycap does for factories — heightmap meshes are
-    well-behaved (single connected component, regular topology) so a
-    single ratio pass lands within ~5% of target every time.
+    Was COLLAPSE/ratio-based; PLANAR with a tight angle limit keeps
+    crisp ridge edges while dissolving co-planar faces. This pairs
+    better with the painterly Sky-CotL look: long sweeping ridges
+    survive instead of getting smeared by an unbiased collapse.
 
-    Idempotent if the mesh is already under budget.
+    Falls back to COLLAPSE if PLANAR doesn't reach the vertex target
+    in one pass (rare on heightmaps but possible on near-flat plains
+    where everything is co-planar and the angle gate blocks reduction).
+
+    Vertex colours (Col FLOAT_COLOR domain="POINT") propagate through
+    both decimator paths.
     """
     import bpy
+    import math
 
     me = obj.data
     n = len(me.vertices)
     if n <= int(target_verts):
         return
-    ratio = max(0.02, min(1.0, float(target_verts) / float(n)))
 
     prev_active = bpy.context.view_layer.objects.active
     prev_selected = list(bpy.context.selected_objects)
@@ -872,16 +917,38 @@ def _decimate_terrain(obj, target_verts: int) -> None:
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
+
+        # Try DISSOLVE (planar / angle-limited) first — preserves
+        # silhouette ridges by collapsing co-planar faces only. Blender's
+        # Decimate enum spells this ``DISSOLVE``; the docs/UI label it
+        # "Planar".
         mod_name = "TerrainLOD"
         mod = obj.modifiers.new(mod_name, "DECIMATE")
-        mod.decimate_type = "COLLAPSE"
-        mod.ratio = ratio
+        mod.decimate_type = "DISSOLVE"
+        mod.angle_limit = math.radians(5.0)
+        mod.use_dissolve_boundaries = True
         try:
             bpy.ops.object.modifier_apply(modifier=mod_name)
         except RuntimeError as exc:
-            print(f"[eroded_terrain] decimate failed ({n}->{target_verts}): {exc}")
+            print(f"[eroded_terrain] PLANAR decimate failed ({exc}); falling back to COLLAPSE")
             if mod_name in obj.modifiers:
                 obj.modifiers.remove(obj.modifiers[mod_name])
+
+        # If PLANAR didn't get us close enough, follow up with COLLAPSE
+        # at the remaining ratio. PLANAR alone often overshoots / undershoots
+        # because its trigger is angle-based, not vert-count based.
+        n_after_planar = len(me.vertices)
+        if n_after_planar > int(target_verts) * 1.3:
+            ratio = max(0.02, min(1.0, float(target_verts) / float(n_after_planar)))
+            mod2 = obj.modifiers.new("TerrainLOD2", "DECIMATE")
+            mod2.decimate_type = "COLLAPSE"
+            mod2.ratio = ratio
+            try:
+                bpy.ops.object.modifier_apply(modifier="TerrainLOD2")
+            except RuntimeError as exc:
+                print(f"[eroded_terrain] COLLAPSE follow-up failed ({exc})")
+                if "TerrainLOD2" in obj.modifiers:
+                    obj.modifiers.remove(obj.modifiers["TerrainLOD2"])
     finally:
         bpy.ops.object.select_all(action="DESELECT")
         for o in prev_selected:
@@ -1037,7 +1104,7 @@ def make_eroded_terrain(
     troughs: Sequence[Trough] = (),
     plain_offset: float = 2.4,
     sea_level: float = 0.5,
-    erode_iters: int = 35,
+    erode_iters: int = 4,
     deposition: float = 0.4,
     edge_falloff: float = 18.0,
     edge_floor: float | None = None,
@@ -1327,7 +1394,48 @@ def make_eroded_terrain(
                 print(f"[eroded_terrain] AO baked into Col ({n_verts} verts, "
                       f"min={ao.min():.2f} max={ao.max():.2f})")
         # Subtle macro variation — broad tone shifts, not splotches.
-        _apply_voronoi_macro(me, scale=4.0, seed=int(seed))
+        _apply_painterly_hsv_macro(me, seed=int(seed))
+
+        # Distance-baked aerial perspective — lerp distant verts toward
+        # a warm sky tint, baked into Col so it survives OBJ → Three.js
+        # (Cycles Mist Pass is compositor-only and wouldn't reach the
+        # browser viewer). Distance is measured from a "viewer anchor"
+        # — the scene camera if it's already placed, else (0, -size, 0)
+        # which approximates the LLM's typical south-of-origin cam.
+        try:
+            cam = bpy.context.scene.camera
+            if cam is not None:
+                anchor = np.array(cam.location[:3], dtype=np.float32)
+            else:
+                # Stand-in anchor: south-of-origin, slightly elevated.
+                anchor = np.array([0.0, -float(size) * 0.85, float(size) * 0.35],
+                                  dtype=np.float32)
+            n_v = len(me.vertices)
+            vflat = np.empty(n_v * 3, dtype=np.float32)
+            me.vertices.foreach_get("co", vflat)
+            vxyz = vflat.reshape(n_v, 3)
+            dist = np.linalg.norm(vxyz - anchor, axis=1)
+            # Fade ramp tuned to scene size — starts at 0.4×size,
+            # saturates at 1.2×size. Max blend 0.45 reads as warm haze
+            # without washing out distant heroes.
+            fade_lo = float(size) * 0.4
+            fade_hi = float(size) * 1.2
+            fog_t = np.clip((dist - fade_lo) / max(fade_hi - fade_lo, 1.0),
+                            0.0, 1.0)
+            sky_lin = np.array([0.78, 0.72, 0.65], dtype=np.float32)
+            ca = me.color_attributes.get("Col")
+            if ca is not None and len(ca.data) == n_v:
+                rgba_d = np.empty(n_v * 4, dtype=np.float32)
+                ca.data.foreach_get("color", rgba_d)
+                rgba_d = rgba_d.reshape(n_v, 4)
+                blend = (fog_t * 0.45)[:, None]
+                rgba_d[:, :3] = rgba_d[:, :3] * (1 - blend) + sky_lin * blend
+                ca.data.foreach_set("color", rgba_d.flatten())
+                print(f"[eroded_terrain] aerial perspective baked "
+                      f"(fade {fog_t.min():.2f}..{fog_t.max():.2f})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[eroded_terrain] aerial perspective bake skipped: {exc}")
+
         print(f"[eroded_terrain] painterly pipeline applied "
               f"(faces={len(me.polygons)}, verts={len(me.vertices)})")
 

@@ -252,7 +252,7 @@ CRITICAL RULES:
           ],
           plain_offset=2.4,    # lift plains so meadow dominates
           sea_level=0.5,       # below this = lakebed/shore color
-          erode_iters=35,
+          erode_iters=4,         # painterly Sky look — minimal erosion
       )
 
     Tuning rules:
@@ -970,9 +970,9 @@ def _scene_brief_block(map_size: str) -> str:
         "    palette_preset='alpine',  # alpine|desert|wetland|volcanic|savanna|tundra|tropical\n"
         "    composition=Composition(\n"
         "        heroes=[\n"
-        "            Hero(cx=P_X,  cy=P_Y,  radius=9,  hardness=2.0),  # plateau\n"
-        "            Hero(cx=S1_X, cy=S1_Y, radius=8,  hardness=1.6),\n"
-        "            Hero(cx=S2_X, cy=S2_Y, radius=8,  hardness=1.6),\n"
+        "            Hero(cx=P_X,  cy=P_Y,  radius=18, hardness=1.2),  # broad soft plateau\n"
+        "            Hero(cx=S1_X, cy=S1_Y, radius=14, hardness=1.0),\n"
+        "            Hero(cx=S2_X, cy=S2_Y, radius=14, hardness=1.0),\n"
         "        ],\n"
         "        paths=[\n"
         "            # Trunk: entry → primary hero. All branches share waypoint #0.\n"
@@ -993,13 +993,12 @@ def _scene_brief_block(map_size: str) -> str:
         "place(hero_obj, P_X, P_Y)\n"
         "```\n\n"
         "Operator semantics:\n"
-        "- **Hero(cx, cy, radius, hardness=2.0)** — Gaussian-falloff plateau "
-        "centered at (cx, cy). `radius` is the influence reach in BU; pick "
-        "8–12 BU for a single building, 14–20 BU for a fortress/monastery "
-        "compound. `hardness` 1.5–2.0 = soft plateau (alpine vibe), 2.5–4.0 "
-        "= sharp mesa edges. Default `target_z=None` flattens toward the "
-        "natural local height — only override when a fortress should sit "
-        "above a natural valley.\n"
+        "- **Hero(cx, cy, radius, hardness=1.2)** — Gaussian-falloff plateau "
+        "centered at (cx, cy). For the painterly Sky-CotL look, prefer "
+        "**broad soft plateaus**: `radius=14–22 BU`, `hardness=1.0–1.4`. "
+        "Sharp `hardness=2.5+` is reserved for fortress/mesa scenes that "
+        "explicitly call for cliff edges. Default `target_z=None` flattens "
+        "toward the natural local height.\n"
         "- **Pathway(waypoints, width=2.5, depth=0.0, blend=1.5, "
         "archetype='dirt')** — smooth "
         "saddle along the polyline. Waypoint heights are sampled from the "
