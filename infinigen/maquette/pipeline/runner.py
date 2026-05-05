@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import shlex
 import shutil
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -1197,12 +1198,24 @@ def call_claude(prompt: str, *, model: str | None = None,
     cmd = ["claude", "-p"]
     if model:
         cmd.extend(["--model", model])
+    # Run from a neutral dir so claude doesn't auto-discover the
+    # caller's CLAUDE.md or auto-memory. Memory + project context are
+    # keyed off cwd; a cwd of /tmp gives Claude an empty project ctx
+    # and our build prompt is fully self-contained anyway. Also strip
+    # CLAUDE_PROJECT_DIR / PWD from the env for the same reason.
+    pipeline_env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("CLAUDE_PROJECT_DIR", "PWD", "OLDPWD")
+    }
+    pipeline_env["PWD"] = "/tmp"
     proc = subprocess.run(
         cmd,
         input=prompt,
         text=True,
         capture_output=True,
         timeout=timeout_seconds,
+        cwd="/tmp",
+        env=pipeline_env,
     )
     if proc.returncode != 0:
         raise RuntimeError(
