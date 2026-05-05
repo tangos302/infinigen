@@ -74,6 +74,32 @@ class Pathway:
 
 
 @dataclass
+class Ridge:
+    """A sweeping primary ridge that gives the scene structural backbone.
+
+    Sky CotL scenes always frame ONE dominant silhouette curve — the
+    eye reads it as the scene's spine. This primitive lays a Catmull-Rom-
+    smoothed curve through your waypoints and adds Gaussian elevation
+    along it, so the heightmap has a long flowing ridge instead of
+    isolated peaks.
+
+    Use this BEFORE heroes — heroes can sit on top of the ridge for
+    even more dramatic silhouettes. Pair with broad, soft heroes
+    (``Hero.hardness=1.0``).
+
+    ``height`` is the peak elevation along the centerline (in BU above
+    the surrounding terrain). ``width`` is the falloff radius — at this
+    distance from the centerline, contribution is ~37 % (Gaussian).
+    ``hardness`` shapes the Gaussian: 1.0 = soft dome, 1.5 = standard,
+    2.5 = sharp ridge.
+    """
+    waypoints: Sequence[tuple[float, float]]
+    height: float = 8.0
+    width: float = 25.0
+    hardness: float = 1.4
+
+
+@dataclass
 class Water:
     """A water body that carves a basin into the terrain.
 
@@ -96,7 +122,8 @@ class Composition:
     the erosion as authored.
     """
     heroes: list[Hero] = field(default_factory=list)
-    paths: list[Path] = field(default_factory=list)
+    paths: list[Pathway] = field(default_factory=list)
+    ridges: list[Ridge] = field(default_factory=list)
     water: Water | None = None
 
 
@@ -321,6 +348,31 @@ def valley_along(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
     return (H * (1.0 - w) + target_z * w).astype(np.float32)
 
 
+def ridge_along(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
+                waypoints: Sequence[tuple[float, float]],
+                *,
+                height: float = 8.0,
+                width: float = 25.0,
+                hardness: float = 1.4) -> np.ndarray:
+    """Add a sweeping Gaussian-falloff ridge along a polyline.
+
+    For each cell, distance to the polyline is ``d``; elevation
+    contribution is ``height * exp(-(d/width)^hardness)``. Adds (does
+    not replace) so the ridge layers on top of existing terrain.
+
+    Use this for the scene's structural backbone — Sky CotL's spine
+    ridges. Pass through the same Catmull-Rom resampling we use for
+    paths so the silhouette is smooth.
+    """
+    pts = list(waypoints)
+    if len(pts) < 1:
+        return H
+    smoothed = _resample_catmull(pts, samples_per_segment=12, jitter=0.0)
+    d = _polyline_distance(X, Y, smoothed) / max(float(width), 1e-6)
+    contrib = (np.exp(-(d ** float(hardness))) * float(height)).astype(np.float32)
+    return (H + contrib).astype(np.float32)
+
+
 def basin_radial(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
                  cx: float, cy: float, radius: float,
                  depth: float = 0.4) -> np.ndarray:
@@ -348,8 +400,10 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
     """Run all constraints in canonical order and return the new H.
 
     Order matters:
-      1. Heroes first (so paths thread through plateaus, not around them).
-      2. Paths next (using post-hero heights for waypoint sampling so the
+      0. **Ridges first** — sweeping backbone shapes for the scene
+         silhouette. Heroes can then sit on top.
+      1. Heroes (so paths thread through plateaus, not around them).
+      2. Paths (using post-hero heights for waypoint sampling so the
          path lands ON the plateau surface, not under it).
       3. Water last (so the basin can dip below paths that cross it
          without the path carving fighting back).
@@ -362,10 +416,28 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
     if comp is None:
         return H
     H_out = H.astype(np.float32)
+    for ridge in comp.ridges:
+        H_out = ridge_along(H_out, X, Y, ridge.waypoints,
+                            height=ridge.height, width=ridge.width,
+                            hardness=ridge.hardness)
+
+    # If ridges modified the terrain, build a post-ridge sampler so
+    # heroes flatten toward the *post-ridge* height (otherwise a hero
+    # on a ridge would carve back to the original valley elevation).
+    def _post_ridge_sample(x: float, y: float) -> float:
+        res = H_out.shape[0]
+        half = float((np.max(X) - np.min(X)) * 0.5)
+        fi = (x + half) / (2.0 * half) * (res - 1)
+        fj = (y + half) / (2.0 * half) * (res - 1)
+        i = int(np.clip(round(fi), 0, res - 1))
+        j = int(np.clip(round(fj), 0, res - 1))
+        return float(H_out[j, i])
+    hero_height_sampler = _post_ridge_sample if comp.ridges else base_height_at
+
     for hero in comp.heroes:
         target_z = hero.target_z
         if target_z is None:
-            target_z = float(base_height_at(hero.cx, hero.cy))
+            target_z = float(hero_height_sampler(hero.cx, hero.cy))
         H_out = flatten_radial(H_out, X, Y, hero.cx, hero.cy,
                                hero.radius, target_z, hero.hardness)
     if comp.paths:
@@ -410,6 +482,32 @@ _PATH_COLORS: dict[str, tuple[float, float, float]] = {
     "wood":  (0.45, 0.30, 0.18),  # boardwalk plank
     "sand":  (0.78, 0.68, 0.46),  # desert track, bright
 }
+
+
+def apply_plateau_edge_ring(col: np.ndarray, X: np.ndarray, Y: np.ndarray,
+                             comp: Composition | None,
+                             *,
+                             ring_width: float = 1.5,
+                             darken: float = 0.18) -> np.ndarray:
+    """Paint a thin darker ring around each Hero plateau perimeter so the
+    plateau reads as a soft cliff rather than a stack of pancakes.
+
+    For each Hero, builds a smooth annulus mask at radius ``hero.radius``,
+    width ``ring_width`` BU, and multiplies ``col`` by ``(1 - darken * mask)``.
+    No-op when no heroes are passed.
+    """
+    if comp is None or not comp.heroes:
+        return col
+    import numpy as _np
+    out = _np.array(col, dtype=_np.float32, copy=True)
+    for hero in comp.heroes:
+        d = _np.hypot(X - hero.cx, Y - hero.cy)
+        # Annulus: 1 at r=radius, 0 outside [radius - ring_width, radius + ring_width]
+        inner = _smoothstep(hero.radius - ring_width, hero.radius, d)
+        outer = 1.0 - _smoothstep(hero.radius, hero.radius + ring_width, d)
+        ring = (inner * outer).astype(_np.float32)
+        out = out * (1.0 - float(darken) * ring[..., None])
+    return _np.clip(out, 0, 1)
 
 
 def apply_path_tint(col: np.ndarray, X: np.ndarray, Y: np.ndarray,

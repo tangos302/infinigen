@@ -511,12 +511,17 @@ def _quantile_thresholds(elev, sea_level: float):
             "alpine_top": 6.0,
             "snow_top":   12.0,
         }
+    # Biased toward "single dominant biome" — Sky CotL scenes are
+    # mono-toned per vista (90% Daylight Prairie grass, 90% Wasteland
+    # sand). Quantiles compressed: meadow now covers 0.06..0.72 (66%
+    # of land, up from 39%), forest 0.72..0.86, alpine 0.86..0.96,
+    # snow >0.96. Was producing the "heatmap" stripe read.
     return {
         "beach_top":  float(np.quantile(land, 0.06)),
-        "meadow_top": float(np.quantile(land, 0.45)),
-        "forest_top": float(np.quantile(land, 0.78)),
-        "alpine_top": float(np.quantile(land, 0.93)),
-        "snow_top":   float(np.quantile(land, 0.99)),
+        "meadow_top": float(np.quantile(land, 0.72)),
+        "forest_top": float(np.quantile(land, 0.86)),
+        "alpine_top": float(np.quantile(land, 0.96)),
+        "snow_top":   float(np.quantile(land, 0.995)),
     }
 
 
@@ -651,6 +656,31 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
     fbm = 0.7 * n1 + 0.3 * n2  # roughly in [-1, +1]
     tint = (fbm * 0.05)[..., None]  # ±5 % continuous brightness.
     out = np.clip(out * (1.0 + tint), 0, 1)
+
+    # 3. Vertical brightness gradient — Sky's biggest tonal lever. Bake
+    # a +18 % brightness on highs / -8 % on lows so the silhouette
+    # reads with sun-touched ridges and shadowed valleys before any
+    # actual lighting is applied.
+    z_lo, z_hi = float(elev.min()), float(elev.max())
+    if z_hi - z_lo > 1e-3:
+        z_norm = ((elev - z_lo) / (z_hi - z_lo)).astype(np.float32)
+        vert_grad = (0.92 + 0.26 * z_norm)[..., None]
+        out = np.clip(out * vert_grad, 0, 1)
+
+    # 4. Crest highlight strip — second derivative of elev highlights
+    # ridge tops; soft positive Gaussian Laplacian → multiply by
+    # (1 + 0.10) on those cells. Looks like sun-touched snow rims.
+    try:
+        from scipy.ndimage import gaussian_laplace
+        crest = (-gaussian_laplace(elev.astype(np.float32), sigma=2.0)).astype(np.float32)
+        # Normalize to [0, 1] using positive max (negative = valleys).
+        max_pos = max(float(crest.max()), 1e-3)
+        crest = np.clip(crest / max_pos, 0, 1)
+        crest = crest * crest  # square so only sharpest ridges hit
+        out = np.clip(out * (1.0 + 0.10 * crest[..., None]), 0, 1)
+    except Exception:
+        pass
+
     return out
 
 
@@ -1250,17 +1280,24 @@ def make_eroded_terrain(
     # painting from these colours and a slope-darken would double up.
     if not realistic_textures:
         COL = _apply_stylised_passes(H, COL, palette, seed=int(seed))
-        # Path tint — paint Pathway corridors with their archetype
-        # colour (dirt/stone/wood/sand). The carve in apply_composition
-        # only changed terrain HEIGHT; without this pass the carved
-        # path keeps its biome colour and reads as a depression in
-        # meadow rather than an actual road.
-        if composition is not None and composition.paths:
+        # Composition-driven colour passes — path corridors + hero
+        # plateau edge rings. Both run on the (res, res, 3) COL grid;
+        # build the world-XY mesh grid once and share.
+        if composition is not None:
             from infinigen.maquette.runtime import influence as _infl
             _coords = np.linspace(-float(size), float(size), int(resolution),
                                   dtype=np.float32)
             _Xg, _Yg = np.meshgrid(_coords, _coords)
-            COL = _infl.apply_path_tint(COL, _Xg, _Yg, composition)
+            if composition.paths:
+                # Path tint — paint Pathway corridors with their archetype
+                # colour (dirt/stone/wood/sand). The carve in
+                # apply_composition only changed terrain HEIGHT; without
+                # this pass the carved path keeps its biome colour and
+                # reads as a depression in meadow rather than a road.
+                COL = _infl.apply_path_tint(COL, _Xg, _Yg, composition)
+            if composition.heroes:
+                # Dark plateau-edge ring — soft-cliff read around each Hero.
+                COL = _infl.apply_plateau_edge_ring(COL, _Xg, _Yg, composition)
 
     res = resolution
     xs = np.linspace(-size, size, res, dtype=np.float32)
