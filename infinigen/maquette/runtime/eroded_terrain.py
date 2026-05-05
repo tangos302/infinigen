@@ -610,25 +610,27 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
 
     out = np.array(col, dtype=np.float32, copy=True)
 
-    # 1. Slope tint — wider band, much darker rock target.
+    # 1. Slope tint — gentle. Painterly mode wants the rock band to read
+    # as a *suggestion* of rock under the cel-toon shading, not a high-
+    # contrast notch. Toon BSDF amplifies everything, so the amplitude
+    # is half what the chunky-poly pipeline used.
     gy, gx = np.gradient(elev)
     slope = np.sqrt(gx * gx + gy * gy)
-    s = np.clip((slope - 0.20) / 0.40, 0, 1)
+    s = np.clip((slope - 0.30) / 0.50, 0, 1)
     s = s * s * (3.0 - 2.0 * s)
-    rock_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.30
+    rock_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.50
     out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
 
-    # 2. HSV-value jitter via cheap deterministic FBM, 5 quantised
-    #    buckets at ±0/±6/±12 % brightness.
+    # 2. Smooth low-frequency macro variation — broad pasture tones, not
+    # high-contrast splotches. ±5 % brightness off a smooth FBM (no
+    # quantisation: continuous variation reads painterly).
     res = elev.shape[0]
     coords = np.indices((res, res), dtype=np.float32) / float(res)
     seed_phase = float(seed) * 0.137
-    n1 = np.cos(coords[0] * 13.0 + seed_phase) * np.sin(coords[1] * 17.0 + seed_phase * 1.3)
-    n2 = np.cos(coords[0] * 37.0 + seed_phase * 2.1) * np.sin(coords[1] * 41.0 + seed_phase * 1.7)
-    fbm = 0.65 * n1 + 0.35 * n2  # roughly in [-1, +1]
-    # Quantise to {-2, -1, 0, +1, +2} — 5 buckets.
-    bucket = np.round(np.clip(fbm * 2.0, -2.0, 2.0)).astype(np.float32)
-    tint = (bucket * 0.06)[..., None]  # ±12 % multiplicative brightness.
+    n1 = np.cos(coords[0] * 6.0 + seed_phase) * np.sin(coords[1] * 7.0 + seed_phase * 1.3)
+    n2 = np.cos(coords[0] * 17.0 + seed_phase * 2.1) * np.sin(coords[1] * 19.0 + seed_phase * 1.7)
+    fbm = 0.7 * n1 + 0.3 * n2  # roughly in [-1, +1]
+    tint = (fbm * 0.05)[..., None]  # ±5 % continuous brightness.
     out = np.clip(out * (1.0 + tint), 0, 1)
     return out
 
@@ -708,17 +710,21 @@ def _write_per_face_col(mesh, col_grid, size):
     return face_rgb
 
 
-def _apply_voronoi_macro(mesh, *, scale: float = 12.0, seed: int = 0):
+def _apply_voronoi_macro(mesh, *, scale: float = 4.0, seed: int = 0,
+                         amplitude: float = 0.04):
     """Per-face HSV value-offset from a Voronoi cell hash.
 
     Each face is bucketed into a ``scale`` BU grid cell on world XY; cell
-    indices are hashed to one of 5 brightness buckets (``-12, -6, 0, +6,
-    +12 %``). Faces in the same cell share an offset, neighbouring cells
-    get different offsets. This is the "macro patch" pass that breaks
-    the "every meadow is one flat green" read into painterly variation.
+    indices are hashed to a continuous brightness offset in ±``amplitude``.
+    Faces in the same cell share an offset, neighbouring cells get
+    different offsets. This is the "macro patch" pass that breaks the
+    "every meadow is one flat green" read into painterly variation.
 
-    Idempotent on ``seed`` — re-runs of the same scene reproduce the
-    same patches.
+    Painterly mode uses scale=4 + amplitude=0.04 (broad soft pasture
+    tones). Was scale=12 + amplitude=0.12 in the chunky-poly era —
+    too loud for the smooth-shaded Sky CotL look.
+
+    Idempotent on ``seed``.
     """
     import numpy as np
 
@@ -742,8 +748,9 @@ def _apply_voronoi_macro(mesh, *, scale: float = 12.0, seed: int = 0):
     cy = np.floor(centroids[:, 1] / float(scale)).astype(np.int64)
     h = (cx * 73856093) ^ (cy * 19349663) ^ (int(seed) * 83492791)
     h = (h.astype(np.float64) % 100000) / 100000.0
-    bucket = np.round(h * 4 - 2).astype(np.int32)  # -2..+2
-    offset = bucket.astype(np.float32) * 0.06       # ±12 % brightness
+    # Continuous offset in [-amplitude, +amplitude] — smooth pasture
+    # variation rather than quantised splotches.
+    offset = ((h * 2.0 - 1.0).astype(np.float32) * float(amplitude))
 
     col_attr = mesh.color_attributes.get("Col")
     if col_attr is None:
@@ -1044,7 +1051,7 @@ def make_eroded_terrain(
     water_thickness: float = 0.4,
     water_min_area_cells: int = 12,
     water_low_poly_shader: bool = True,
-    target_verts: int | None = 5000,
+    target_verts: int | None = 30000,
     composition=None,
     realistic_textures: bool | None = None,
     bake_for_export: bool | None = None,
@@ -1221,15 +1228,20 @@ def make_eroded_terrain(
     rgba[:, 3] = 1.0
     col_attr.data.foreach_set("color", rgba.flatten())
 
-    # Stylised mode wants flat shading regardless of caller preference —
-    # smooth shading interpolates the per-vertex biome colours into
-    # gradients across the face, killing the hard band edges that make
-    # the low-poly look read. Realistic mode keeps smooth shading
-    # because its PBR shader paints continuous texture detail.
-    use_flat = not realistic_textures
+    # Painterly stylised mode wants SMOOTH shading. The per-vertex Col
+    # gradient + Toon BSDF cel bands produce the soft rolling read that
+    # Sky CotL uses; flat shading would re-introduce the chunky low-
+    # poly look the user explicitly rejected. Realistic mode also uses
+    # smooth shading.
     for poly in me.polygons:
-        poly.use_smooth = (smooth_shading and not use_flat)
+        poly.use_smooth = bool(smooth_shading)
 
+    # Painterly Sky-CotL terrain material — Toon BSDF Diffuse component
+    # gives Cycles a 2-step cel band for free, fed by the per-vertex Col
+    # attribute. This is the simplest viable painterly material; rim
+    # glossy is OFF for now (Layer Weight Facing routing was producing
+    # gold-blanket renders — re-enable as a small Fresnel-masked add
+    # once we verify the diffuse half reads right).
     mat = bpy.data.materials.new("eroded_terrain_mat")
     mat.use_nodes = True
     nt = mat.node_tree
@@ -1237,16 +1249,16 @@ def make_eroded_terrain(
         if n.type != "OUTPUT_MATERIAL":
             nt.nodes.remove(n)
     out_node = nt.nodes["Material Output"]
-    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+
     attr = nt.nodes.new("ShaderNodeVertexColor")
     attr.layer_name = "Col"
-    nt.links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
-    bsdf.inputs["Roughness"].default_value = 0.95
-    if "Specular IOR Level" in bsdf.inputs:
-        bsdf.inputs["Specular IOR Level"].default_value = 0.05
-    elif "Specular" in bsdf.inputs:
-        bsdf.inputs["Specular"].default_value = 0.05
-    nt.links.new(bsdf.outputs["BSDF"], out_node.inputs["Surface"])
+
+    toon_d = nt.nodes.new("ShaderNodeBsdfToon")
+    toon_d.component = "DIFFUSE"
+    toon_d.inputs["Size"].default_value = 0.55
+    toon_d.inputs["Smooth"].default_value = 0.05
+    nt.links.new(attr.outputs["Color"], toon_d.inputs["Color"])
+    nt.links.new(toon_d.outputs["BSDF"], out_node.inputs["Surface"])
     me.materials.append(mat)
 
     # Splat vertex attributes — five biome weights (grass/forest/rock/
@@ -1287,19 +1299,18 @@ def make_eroded_terrain(
             except Exception as exc:
                 print(f"[eroded_terrain] post-decimate splat skipped ({type(exc).__name__}: {exc})")
 
-    # ── Stylised low-poly pipeline ──────────────────────────────────────
-    # After decimation we go from a smooth heightmap surface to a
-    # discrete-faceted polygon look in three steps:
-    #   1. Edge-split every edge so each face owns its verts.
-    #   2. Sample the (res, res) COL grid at face centroids (nearest)
-    #      and write per-face flat colour. Sharp biome boundaries.
-    #   3. AO bake (with contrast-stretch + lower floor) into Col.
-    #   4. Voronoi macro per-face — Polygon-Runway "macro patches".
-    # Skipped in realistic mode (PBR shader does its own painting).
+    # ── Painterly Sky-CotL pipeline ─────────────────────────────────────
+    # Pivoted from chunky-poly to soft painterly per the Sky: Children
+    # of the Light reference. Smooth shading + per-vertex Col + Toon
+    # BSDF in the material graph + warm world volume = the look.
+    #
+    #   1. Soft AO bake (gentle multiplier — concavities read as cool
+    #      shadow not crack-black)
+    #   2. Broad macro variation at scale 4 BU, ±3 % brightness only
+    #      (subtle pasture tone shifts, not splotchy patches)
+    # Skipped in realistic mode (PBR shader paints its own variation).
     if not realistic_textures:
-        _split_all_face_edges(obj)
-        _write_per_face_col(me, COL, float(size))
-        ao = _bake_ao_to_col(obj, me, samples=8, distance=4.0)
+        ao = _bake_ao_to_col(obj, me, samples=6, distance=3.0)
         if ao is not None:
             n_verts = len(me.vertices)
             rgba_existing = np.empty(n_verts * 4, dtype=np.float32)
@@ -1307,22 +1318,17 @@ def make_eroded_terrain(
             if col_attr_post is not None and len(ao) == n_verts:
                 col_attr_post.data.foreach_get("color", rgba_existing)
                 rgba_existing = rgba_existing.reshape(n_verts, 4)
-                # Contrast-stretch the AO buffer so concavities actually
-                # darken: clip the bottom 20 % (which Cycles often returns
-                # as 0.5–0.7 even on flat ground) and scale up. Floor
-                # 0.45 (was 0.65) so cracks read as near-black rather
-                # than "slightly darker brown".
-                ao_clip = np.clip(ao, 0.0, 1.0)
-                ao_stretched = np.clip((ao_clip - 0.20) / 0.80, 0.0, 1.0)
-                ao_factor = 0.45 + 0.55 * ao_stretched
+                # Gentle AO floor — painterly mode wants softness, NOT
+                # crack notches. Range 0.78..1.00 (was 0.45..1.00).
+                ao_factor = 0.78 + 0.22 * np.clip(ao, 0, 1)
                 rgba_existing[:, :3] *= ao_factor[:, None]
                 rgba_existing = np.clip(rgba_existing, 0, 1)
                 col_attr_post.data.foreach_set("color", rgba_existing.flatten())
                 print(f"[eroded_terrain] AO baked into Col ({n_verts} verts, "
                       f"min={ao.min():.2f} max={ao.max():.2f})")
-        # Macro patches — keep last so it operates on the final colour.
-        _apply_voronoi_macro(me, scale=12.0, seed=int(seed))
-        print(f"[eroded_terrain] stylised pipeline applied "
+        # Subtle macro variation — broad tone shifts, not splotches.
+        _apply_voronoi_macro(me, scale=4.0, seed=int(seed))
+        print(f"[eroded_terrain] painterly pipeline applied "
               f"(faces={len(me.polygons)}, verts={len(me.vertices)})")
 
     # Replace the vertex-color material with the realistic PBR shader

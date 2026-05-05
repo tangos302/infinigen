@@ -57,15 +57,21 @@ def add_aerial_perspective(
     background nodes are wired). Re-callable: replaces any prior
     aerial-perspective volume on the world.
 
-    Currently a no-op on Blender 5.1: the Volume Scatter node picked up
-    new Alpha/Backscatter parameters whose defaults absorb almost all
-    light over our 160 BU scene depth, producing a black render. Until
-    we replace this with a proper Mist-pass / depth-faded background,
-    just skip the volume so build scripts that call it don't blow out
-    the render. Low-poly scenes don't actually need atmospheric haze.
+    DISABLED — World-output volume scatter is fundamentally incompatible
+    with our Sun-light setup. The world volume fills infinite space,
+    which means sun light (treated as parallel rays from infinity) is
+    absorbed over thousands of BU before ever reaching the terrain.
+    Even at density 0.0005, sun extinction over a 1500 BU path is ~50 %;
+    at density 0.002 the scene goes fully black.
+
+    Proper Sky CotL-style aerial perspective needs a **bounded volume
+    box** (a large invisible cube around the scene with the volume
+    material applied to the cube, so sun rays from outside pass
+    through unattenuated). That's a follow-up; for now this helper is
+    a no-op so build scripts that call it don't blow out the render.
     """
-    return  # noqa: F821 — see docstring; rest of body kept for re-enable later
-    import bpy  # noqa: F401, F841 — preserved so the original implementation is intact when we re-enable
+    return  # See docstring; bounded-volume implementation is a TODO.
+    import bpy
 
     scene = bpy.context.scene
     if scene is None:
@@ -81,7 +87,7 @@ def add_aerial_perspective(
     links = nt.links
 
     # Find existing output + background nodes (build script author
-    # already wired them); we just append a Volume Scatter to the
+    # already wired them); we just append the volume nodes to the
     # output's "Volume" socket without touching surface.
     out_node = None
     for n in nodes:
@@ -96,36 +102,49 @@ def add_aerial_perspective(
         if n.get("songe_aerial") == 1:
             nodes.remove(n)
 
-    vol = nodes.new("ShaderNodeVolumeScatter")
-    vol["songe_aerial"] = 1
-    vol.location = (out_node.location.x - 320, out_node.location.y - 220)
-    if color is None:
-        color = (0.78, 0.84, 0.92)
-    vol.inputs["Color"].default_value = (color[0], color[1], color[2], 1.0)
-    # Density is in per-BU absorption, applied over the unbounded world
-    # volume. The 160 BU scene depth means camera→hero is ~80 BU; at the
-    # old 0.06 coefficient, strength=0.6 → density=0.036 → 94% absorption
-    # over that distance → black render. Scaled 10× lower so the effect
-    # reads as subtle aerial haze on distant geometry without blacking
-    # out the foreground. For multi-km landscapes bump back up.
-    vol.inputs["Density"].default_value = max(0.0, float(strength) * 0.006)
+    density = max(0.0, float(strength) * 0.0035)
+    if density < 1e-6:
+        return  # Volume effectively off — leave the world surface alone.
 
-    links.new(vol.outputs["Volume"], out_node.inputs["Volume"])
+    # Scatter — what produces the visible "milky" haze.
+    vol_s = nodes.new("ShaderNodeVolumeScatter")
+    vol_s["songe_aerial"] = 1
+    vol_s.location = (out_node.location.x - 360, out_node.location.y - 200)
+    if color is None:
+        color = (0.92, 0.88, 0.84)  # near-white, slightly warm
+    vol_s.inputs["Color"].default_value = (color[0], color[1], color[2], 1.0)
+    vol_s.inputs["Density"].default_value = density
+    if "Anisotropy" in vol_s.inputs:
+        vol_s.inputs["Anisotropy"].default_value = 0.5
+
+    # Absorption — counters the scatter's whiteout, tinted warm so
+    # distance reads gold not muddy.
+    vol_a = nodes.new("ShaderNodeVolumeAbsorption")
+    vol_a["songe_aerial"] = 1
+    vol_a.location = (out_node.location.x - 360, out_node.location.y - 320)
+    vol_a.inputs["Color"].default_value = (0.95, 0.78, 0.65, 1.0)
+    vol_a.inputs["Density"].default_value = density
+
+    add = nodes.new("ShaderNodeAddShader")
+    add["songe_aerial"] = 1
+    add.location = (out_node.location.x - 180, out_node.location.y - 240)
+    links.new(vol_s.outputs["Volume"], add.inputs[0])
+    links.new(vol_a.outputs["Volume"], add.inputs[1])
+    links.new(add.outputs["Shader"], out_node.inputs["Volume"])
 
     # Cycles needs a few sample bumps to render volumes without
     # massive fireflies. Low limits keep render time sane.
     cycles = scene.cycles if hasattr(scene, "cycles") else None
     if cycles is not None:
-        if getattr(cycles, "volume_bounces", 0) < 1:
-            cycles.volume_bounces = 1
+        if getattr(cycles, "volume_bounces", 0) < 8:
+            cycles.volume_bounces = 8
         if getattr(cycles, "volume_step_rate", 1.0) > 0.5:
             cycles.volume_step_rate = 0.5
         if getattr(cycles, "volume_max_steps", 1024) < 64:
             cycles.volume_max_steps = 64
 
-    # `falloff` reserved for future per-height density via Texture
-    # Coordinate → Math; not implemented yet so we keep the signature
-    # forward-compatible without behavior. Suppress the unused warning.
+    # ``falloff`` reserved for future per-height density via Texture
+    # Coordinate → Math; not implemented yet.
     _ = falloff
 
 
