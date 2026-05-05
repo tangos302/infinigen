@@ -1333,6 +1333,37 @@ def make_eroded_terrain(
     # painting from these colours and a slope-darken would double up.
     if not realistic_textures:
         COL = _apply_stylised_passes(H, COL, palette, seed=int(seed))
+        # Watercolour-paper screen-blend overlay — adds the painterly
+        # "paper grain" wash Sky CotL surfaces have. Tile the 512²
+        # grayscale texture across world XY at ~12 BU/tile, screen-
+        # blend at 18 % strength. Screen blend (1 - (1-a)(1-b)) lifts
+        # values without darkening — preserves biome colour intent.
+        try:
+            from PIL import Image as _Image
+            _tex_path = (Path(__file__).parent / "textures" /
+                         "watercolour_512.png")
+            if _tex_path.is_file():
+                tex = (np.asarray(_Image.open(_tex_path).convert("L"),
+                                  dtype=np.float32) / 255.0)
+                _coords_t = np.linspace(-float(size), float(size),
+                                        int(resolution), dtype=np.float32)
+                _Xt, _Yt = np.meshgrid(_coords_t, _coords_t)
+                # Rotate tex coords 31° so seams don't align with world axes.
+                _ct, _st = np.cos(0.541), np.sin(0.541)
+                _ux = _ct * _Xt + _st * _Yt
+                _uy = -_st * _Xt + _ct * _Yt
+                tile_bu = 12.0
+                tx = (_ux / tile_bu) % 1.0
+                ty = (_uy / tile_bu) % 1.0
+                ti = (tx * tex.shape[1]).astype(np.int32) % tex.shape[1]
+                tj = (ty * tex.shape[0]).astype(np.int32) % tex.shape[0]
+                wash = tex[tj, ti][..., None]  # (res, res, 1)
+                strength = 0.18
+                COL = 1.0 - (1.0 - COL) * (1.0 - wash * strength)
+                COL = np.clip(COL, 0, 1).astype(np.float32)
+        except Exception as _exc:  # noqa: BLE001
+            print(f"[eroded_terrain] watercolour overlay skipped: {_exc}")
+
         # Composition-driven colour passes — path corridors + hero
         # plateau edge rings. Both run on the (res, res, 3) COL grid;
         # build the world-XY mesh grid once and share.
