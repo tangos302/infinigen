@@ -108,6 +108,108 @@ def _smoothstep(edge0: float, edge1: float, x: np.ndarray) -> np.ndarray:
     return (t * t * (3.0 - 2.0 * t)).astype(np.float32)
 
 
+def _resample_catmull(waypoints: Sequence[tuple[float, float]],
+                      *,
+                      samples_per_segment: int = 16,
+                      jitter: float = 0.0,
+                      seed: int = 0) -> list[tuple[float, float]]:
+    """Smooth a coarse LLM polyline into a dense centripetal Catmull-Rom
+    curve, optionally perturbed along its binormal by a low-frequency
+    sine so straight runs read as natural footpaths instead of laser
+    cuts.
+
+    Centripetal (alpha=0.5) Catmull-Rom avoids overshoot near sharp
+    turns — the standard pitfall of uniform CR splines. End-anchor
+    handling: duplicate the first/last point so the curve actually
+    starts/ends on the user-given waypoints.
+
+    ``jitter`` is the maximum binormal displacement in BU. Set 0 (or
+    leave default) for ``stone`` archetype paths that should stay
+    straight; 0.4 BU is a pleasant default for dirt trails.
+    """
+    pts = [tuple(map(float, p)) for p in waypoints]
+    if len(pts) < 2:
+        return pts
+    if len(pts) == 2:
+        # Two-point case has no curvature to interpolate; emit
+        # straight-line samples then jitter.
+        ax, ay = pts[0]
+        bx, by = pts[1]
+        out: list[tuple[float, float]] = []
+        n = max(2, samples_per_segment)
+        for i in range(n + 1):
+            t = i / n
+            out.append((ax + (bx - ax) * t, ay + (by - ay) * t))
+        if jitter > 0:
+            out = _jitter_along_binormal(out, jitter=jitter, seed=seed)
+        return out
+
+    # Pad with duplicated endpoints so segment 0 and segment n are
+    # well-defined for the 4-point CR formula.
+    padded = [pts[0]] + pts + [pts[-1]]
+    out2: list[tuple[float, float]] = []
+
+    def _cr(p0, p1, p2, p3, t, alpha=0.5):
+        # Compute knot deltas using the centripetal exponent.
+        def _d(a, b):
+            return max(((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5, 1e-3) ** alpha
+        t01 = _d(p0, p1)
+        t12 = _d(p1, p2)
+        t23 = _d(p2, p3)
+        t = t01 + (t12 * t)  # parameterise t in the [t01, t01+t12] segment
+        # Standard non-uniform CR via De Casteljau.
+        def _lerp(a, b, t1, t2, ts):
+            den = (t2 - t1) if abs(t2 - t1) > 1e-9 else 1e-9
+            f = (ts - t1) / den
+            return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+        A1 = _lerp(p0, p1, 0.0, t01, t)
+        A2 = _lerp(p1, p2, t01, t01 + t12, t)
+        A3 = _lerp(p2, p3, t01 + t12, t01 + t12 + t23, t)
+        B1 = _lerp(A1, A2, 0.0, t01 + t12, t)
+        B2 = _lerp(A2, A3, t01, t01 + t12 + t23, t)
+        return _lerp(B1, B2, t01, t01 + t12, t)
+
+    for i in range(len(padded) - 3):
+        n = max(2, samples_per_segment)
+        for s in range(n):
+            t = s / n
+            out2.append(_cr(padded[i], padded[i + 1], padded[i + 2], padded[i + 3], t))
+    out2.append(pts[-1])
+
+    if jitter > 0:
+        out2 = _jitter_along_binormal(out2, jitter=jitter, seed=seed)
+    return out2
+
+
+def _jitter_along_binormal(pts: list[tuple[float, float]], *,
+                            jitter: float, seed: int) -> list[tuple[float, float]]:
+    """Perturb each interior point along its segment's binormal by a
+    low-frequency sine. Endpoints are anchored. Seed makes it
+    deterministic; same seed + same input → same output.
+    """
+    if len(pts) < 3 or jitter <= 0:
+        return pts
+    out = [pts[0]]
+    # Phase + frequency derived from seed so each path's wiggle is
+    # different but reproducible.
+    phase = (seed * 0.137) % 6.2831853
+    freq = 0.65 + (seed % 11) * 0.04
+    for i in range(1, len(pts) - 1):
+        ax, ay = pts[i - 1]
+        bx, by = pts[i + 1]
+        # Tangent direction; binormal is the perpendicular in 2D.
+        tx, ty = bx - ax, by - ay
+        ll = (tx * tx + ty * ty) ** 0.5 + 1e-9
+        nx, ny = -ty / ll, tx / ll  # rotate tangent 90°
+        # Sine with per-index phase advance — produces an organic wave.
+        amp = jitter * (0.6 + 0.4 * np.cos(phase + i * freq))
+        amp *= np.sin(phase * 2.0 + i * 0.93)  # second harmonic
+        px, py = pts[i]
+        out.append((float(px + nx * amp), float(py + ny * amp)))
+    out.append(pts[-1])
+    return out
+
+
 def _polyline_distance(X: np.ndarray, Y: np.ndarray,
                        waypoints: Sequence[tuple[float, float]]) -> np.ndarray:
     """Per-cell minimum distance to the polyline. Returns same-shape grid.
@@ -275,8 +377,18 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
             j = int(np.clip(round(fj), 0, res - 1))
             return float(H_out[j, i])
 
-        for path in comp.paths:
-            H_out = valley_along(H_out, X, Y, path.waypoints,
+        for path_idx, path in enumerate(comp.paths):
+            # Resample with centripetal Catmull-Rom + binormal jitter so
+            # straight LLM polylines bend organically. Stone roads stay
+            # rigid (Romans graded their roads) — no jitter for stone.
+            jitter = 0.0 if path.archetype == "stone" else 0.45
+            smoothed = _resample_catmull(
+                path.waypoints,
+                samples_per_segment=12,
+                jitter=jitter,
+                seed=path_idx * 7919 + 13,
+            )
+            H_out = valley_along(H_out, X, Y, smoothed,
                                  width=path.width, depth=path.depth,
                                  blend=path.blend,
                                  base_height_at=_sample_h)
@@ -314,8 +426,19 @@ def apply_path_tint(col: np.ndarray, X: np.ndarray, Y: np.ndarray,
         return col
     import numpy as _np
     out = _np.array(col, dtype=_np.float32, copy=True)
-    for path in comp.paths:
-        d = _polyline_distance(X, Y, path.waypoints)
+    for path_idx, path in enumerate(comp.paths):
+        # Match the resample done in ``apply_composition`` so the colour
+        # band follows the carved curve, not the raw LLM polyline (which
+        # for two-waypoint paths would still read as a straight line of
+        # tinted cells).
+        jitter = 0.0 if path.archetype == "stone" else 0.45
+        smoothed = _resample_catmull(
+            path.waypoints,
+            samples_per_segment=12,
+            jitter=jitter,
+            seed=path_idx * 7919 + 13,
+        )
+        d = _polyline_distance(X, Y, smoothed)
         half = float(path.width) * 0.5
         mask = 1.0 - _smoothstep(half, half + float(path.blend), d)
         w = (mask * float(strength))[..., None]
