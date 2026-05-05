@@ -592,13 +592,16 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
     colour grid:
 
       1. **Slope tint** — cliffs (high gradient magnitude) lerp toward a
-         dark desaturated stone colour, so steep faces read as rock not
-         green sausages. The biggest "feels indie" win per line of code.
+         deep dark stone colour, so steep faces read as rock-shadow
+         notches not green sausages. Widened from [0.35, 0.75] to
+         [0.20, 0.60] so more of the rolling terrain catches the rock
+         tint, and rock target pushed from 0.6× → 0.3× so cliffs read
+         as near-black silhouette breaks (Bad North style).
       2. **HSV value jitter** — sample 2-octave value-noise at the grid
-         coords, quantise to ``{-1, 0, +1}`` × 4 % and shift the colour's
-         brightness. Each biome band becomes 3 quantised tints instead
-         of one flat fill, breaking the "topographic data" look without
-         introducing free-form noise.
+         coords, quantise to 5 buckets ×3 % each (±12 % total range)
+         and shift the colour's brightness. Was ±4 %/3-bucket which was
+         visually invisible; ±12 %/5-bucket is in the Polygon-Runway
+         "macro patch" range.
 
     AO is baked later (after the Blender mesh exists) and multiplied
     into the same vertex-colour attribute. See ``_bake_ao_to_col``.
@@ -607,29 +610,153 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
 
     out = np.array(col, dtype=np.float32, copy=True)
 
-    # 1. Slope tint.
+    # 1. Slope tint — wider band, much darker rock target.
     gy, gx = np.gradient(elev)
     slope = np.sqrt(gx * gx + gy * gy)
-    # Smoothstep over [0.35, 0.75] — flats untouched, mid slopes get a
-    # hint of rock, near-vertical faces fully lerp to the stone colour
-    # (darkened ~40 % so cliffs read with shadow weight).
-    s = np.clip((slope - 0.35) / 0.4, 0, 1)
+    s = np.clip((slope - 0.20) / 0.40, 0, 1)
     s = s * s * (3.0 - 2.0 * s)
-    rock_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.6
+    rock_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.30
     out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
 
-    # 2. HSV-value jitter via cheap deterministic FBM.
+    # 2. HSV-value jitter via cheap deterministic FBM, 5 quantised
+    #    buckets at ±0/±6/±12 % brightness.
     res = elev.shape[0]
     coords = np.indices((res, res), dtype=np.float32) / float(res)
     seed_phase = float(seed) * 0.137
     n1 = np.cos(coords[0] * 13.0 + seed_phase) * np.sin(coords[1] * 17.0 + seed_phase * 1.3)
     n2 = np.cos(coords[0] * 37.0 + seed_phase * 2.1) * np.sin(coords[1] * 41.0 + seed_phase * 1.7)
     fbm = 0.65 * n1 + 0.35 * n2  # roughly in [-1, +1]
-    # Quantise to {-1, 0, +1}; ~33 % land in each bucket.
-    qstep = np.where(fbm < -0.33, -1.0, np.where(fbm > 0.33, 1.0, 0.0))
-    tint = (qstep * 0.04)[..., None]  # ±4 % multiplicative brightness.
+    # Quantise to {-2, -1, 0, +1, +2} — 5 buckets.
+    bucket = np.round(np.clip(fbm * 2.0, -2.0, 2.0)).astype(np.float32)
+    tint = (bucket * 0.06)[..., None]  # ±12 % multiplicative brightness.
     out = np.clip(out * (1.0 + tint), 0, 1)
     return out
+
+
+def _split_all_face_edges(obj):
+    """Edge-split every edge of a mesh so that each face owns its own
+    set of vertices (no sharing across faces). After this, POINT-domain
+    colour attributes behave as per-face flat colours: writing the same
+    RGB to all of a face's verts produces a perfectly flat patch with
+    no interpolation against neighbours, which is the load-bearing
+    rasterisation step for the indie low-poly look.
+
+    Vertex count roughly triples (each shared corner becomes N copies),
+    but the total stays bounded — at 5k pre-split verts → ~15k post-split,
+    well within OBJ/Three.js budgets.
+    """
+    import bmesh
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    # ``bmesh.ops.split_edges`` with all edges = make every edge a seam.
+    bmesh.ops.split_edges(bm, edges=bm.edges[:])
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+
+def _write_per_face_col(mesh, col_grid, size):
+    """Sample ``col_grid`` (res, res, 3 linear RGB) at each face centroid
+    using nearest-neighbour, then write the per-face RGB to every
+    vertex of that face. Assumes ``_split_all_face_edges`` was called
+    so each vertex belongs to exactly one face.
+
+    Nearest-neighbour (not bilinear) sampling is intentional — it's what
+    produces sharp biome boundaries between adjacent faces. Bilinear
+    would re-introduce the soft gradient the whole exercise is trying
+    to eliminate.
+
+    Returns the per-face RGB array (shape ``(n_polys, 3)``) for downstream
+    passes (Voronoi macro, etc.) that want the same per-face look.
+    """
+    import numpy as np
+
+    n_polys = len(mesh.polygons)
+    n_verts = len(mesh.vertices)
+    res = col_grid.shape[0]
+    half = float(size)
+
+    verts_flat = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", verts_flat)
+    verts_xy = verts_flat.reshape(n_verts, 3)[:, :2]
+
+    centroids = np.zeros((n_polys, 2), dtype=np.float32)
+    for i, poly in enumerate(mesh.polygons):
+        s = np.zeros(2, dtype=np.float32)
+        for vi in poly.vertices:
+            s += verts_xy[vi]
+        centroids[i] = s / max(len(poly.vertices), 1)
+
+    sx = np.clip((centroids[:, 0] + half) / (2.0 * half) * (res - 1), 0, res - 1)
+    sy = np.clip((centroids[:, 1] + half) / (2.0 * half) * (res - 1), 0, res - 1)
+    ix = np.round(sx).astype(np.int32)
+    iy = np.round(sy).astype(np.int32)
+    face_rgb = col_grid[iy, ix]  # (n_polys, 3)
+
+    rgba = np.empty((n_verts, 4), dtype=np.float32)
+    rgba[:, 3] = 1.0
+    for poly_i, poly in enumerate(mesh.polygons):
+        c = face_rgb[poly_i]
+        for vi in poly.vertices:
+            rgba[vi, :3] = c
+
+    col_attr = mesh.color_attributes.get("Col")
+    if col_attr is None:
+        col_attr = mesh.color_attributes.new(name="Col", type="FLOAT_COLOR", domain="POINT")
+    col_attr.data.foreach_set("color", rgba.flatten())
+    return face_rgb
+
+
+def _apply_voronoi_macro(mesh, *, scale: float = 12.0, seed: int = 0):
+    """Per-face HSV value-offset from a Voronoi cell hash.
+
+    Each face is bucketed into a ``scale`` BU grid cell on world XY; cell
+    indices are hashed to one of 5 brightness buckets (``-12, -6, 0, +6,
+    +12 %``). Faces in the same cell share an offset, neighbouring cells
+    get different offsets. This is the "macro patch" pass that breaks
+    the "every meadow is one flat green" read into painterly variation.
+
+    Idempotent on ``seed`` — re-runs of the same scene reproduce the
+    same patches.
+    """
+    import numpy as np
+
+    n_polys = len(mesh.polygons)
+    n_verts = len(mesh.vertices)
+    if n_polys == 0:
+        return
+
+    verts_flat = np.empty(n_verts * 3, dtype=np.float32)
+    mesh.vertices.foreach_get("co", verts_flat)
+    verts_xy = verts_flat.reshape(n_verts, 3)[:, :2]
+
+    centroids = np.zeros((n_polys, 2), dtype=np.float32)
+    for i, poly in enumerate(mesh.polygons):
+        s = np.zeros(2, dtype=np.float32)
+        for vi in poly.vertices:
+            s += verts_xy[vi]
+        centroids[i] = s / max(len(poly.vertices), 1)
+
+    cx = np.floor(centroids[:, 0] / float(scale)).astype(np.int64)
+    cy = np.floor(centroids[:, 1] / float(scale)).astype(np.int64)
+    h = (cx * 73856093) ^ (cy * 19349663) ^ (int(seed) * 83492791)
+    h = (h.astype(np.float64) % 100000) / 100000.0
+    bucket = np.round(h * 4 - 2).astype(np.int32)  # -2..+2
+    offset = bucket.astype(np.float32) * 0.06       # ±12 % brightness
+
+    col_attr = mesh.color_attributes.get("Col")
+    if col_attr is None:
+        return
+    rgba = np.empty(n_verts * 4, dtype=np.float32)
+    col_attr.data.foreach_get("color", rgba)
+    rgba = rgba.reshape(n_verts, 4)
+
+    for poly_i, poly in enumerate(mesh.polygons):
+        f = 1.0 + float(offset[poly_i])
+        for vi in poly.vertices:
+            rgba[vi, :3] = np.clip(rgba[vi, :3] * f, 0, 1)
+    col_attr.data.foreach_set("color", rgba.flatten())
 
 
 def _bake_ao_to_col(obj, mesh, *, samples: int = 8, distance: float = 4.0):
@@ -917,7 +1044,7 @@ def make_eroded_terrain(
     water_thickness: float = 0.4,
     water_min_area_cells: int = 12,
     water_low_poly_shader: bool = True,
-    target_verts: int | None = 32000,
+    target_verts: int | None = 5000,
     composition=None,
     realistic_textures: bool | None = None,
     bake_for_export: bool | None = None,
@@ -1160,11 +1287,18 @@ def make_eroded_terrain(
             except Exception as exc:
                 print(f"[eroded_terrain] post-decimate splat skipped ({type(exc).__name__}: {exc})")
 
-    # AO bake — Cycles AO into a temporary vertex attribute, multiply
-    # back into Col so concavities get a darker shoulder. Runs AFTER
-    # decimation so the AO matches the geometry that ships. Skipped in
-    # realistic mode because the PBR shader handles its own shadow term.
+    # ── Stylised low-poly pipeline ──────────────────────────────────────
+    # After decimation we go from a smooth heightmap surface to a
+    # discrete-faceted polygon look in three steps:
+    #   1. Edge-split every edge so each face owns its verts.
+    #   2. Sample the (res, res) COL grid at face centroids (nearest)
+    #      and write per-face flat colour. Sharp biome boundaries.
+    #   3. AO bake (with contrast-stretch + lower floor) into Col.
+    #   4. Voronoi macro per-face — Polygon-Runway "macro patches".
+    # Skipped in realistic mode (PBR shader does its own painting).
     if not realistic_textures:
+        _split_all_face_edges(obj)
+        _write_per_face_col(me, COL, float(size))
         ao = _bake_ao_to_col(obj, me, samples=8, distance=4.0)
         if ao is not None:
             n_verts = len(me.vertices)
@@ -1173,14 +1307,23 @@ def make_eroded_terrain(
             if col_attr_post is not None and len(ao) == n_verts:
                 col_attr_post.data.foreach_get("color", rgba_existing)
                 rgba_existing = rgba_existing.reshape(n_verts, 4)
-                # Multiplier 0.65..1.0 — keeps concavities readable
-                # without making them muddy. Tweaked to taste.
-                ao_factor = 0.65 + 0.35 * np.clip(ao, 0, 1)
+                # Contrast-stretch the AO buffer so concavities actually
+                # darken: clip the bottom 20 % (which Cycles often returns
+                # as 0.5–0.7 even on flat ground) and scale up. Floor
+                # 0.45 (was 0.65) so cracks read as near-black rather
+                # than "slightly darker brown".
+                ao_clip = np.clip(ao, 0.0, 1.0)
+                ao_stretched = np.clip((ao_clip - 0.20) / 0.80, 0.0, 1.0)
+                ao_factor = 0.45 + 0.55 * ao_stretched
                 rgba_existing[:, :3] *= ao_factor[:, None]
                 rgba_existing = np.clip(rgba_existing, 0, 1)
                 col_attr_post.data.foreach_set("color", rgba_existing.flatten())
                 print(f"[eroded_terrain] AO baked into Col ({n_verts} verts, "
                       f"min={ao.min():.2f} max={ao.max():.2f})")
+        # Macro patches — keep last so it operates on the final colour.
+        _apply_voronoi_macro(me, scale=12.0, seed=int(seed))
+        print(f"[eroded_terrain] stylised pipeline applied "
+              f"(faces={len(me.polygons)}, verts={len(me.vertices)})")
 
     # Replace the vertex-color material with the realistic PBR shader
     # when textures + splat are available.
