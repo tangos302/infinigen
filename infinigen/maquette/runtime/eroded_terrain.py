@@ -95,6 +95,85 @@ _DEFAULT_PALETTE: dict[str, PaletteRGB] = {
     "snow":    (0.86, 0.88, 0.92),    # off-white — Standard view will lift this to display white
 }
 
+# Named biome presets — the LLM picks one with ``palette_preset="..."``
+# instead of authoring a 7-color dict by hand. Names track scene mood,
+# not strict ecology, so an "oasis" prompt → ``palette_preset="desert"``.
+# Slot semantics are unchanged across presets: lakebed (lowest, wet) →
+# shore → meadow (low land) → forest (mid land) → stone (mid-high) →
+# alpine (rocky high) → snow (peak). Picking the wrong preset is safe;
+# the colors just won't match the prompt.
+_PALETTE_PRESETS: dict[str, dict[str, PaletteRGB]] = {
+    "alpine": _DEFAULT_PALETTE,        # explicit alias for clarity
+    "desert": {
+        "lakebed": (0.45, 0.36, 0.22),  # oasis pool floor, dark damp sand
+        "shore":   (0.86, 0.74, 0.50),  # bright dune sand
+        "meadow":  (0.78, 0.68, 0.44),  # dry pale sand grass
+        "forest":  (0.55, 0.46, 0.28),  # scrub thicket, brown-ochre
+        "stone":   (0.65, 0.48, 0.32),  # warm sandstone
+        "alpine":  (0.74, 0.60, 0.40),  # weathered rock, lighter than stone
+        "snow":    (0.92, 0.84, 0.62),  # bleached crest sand, no white
+    },
+    "wetland": {
+        "lakebed": (0.30, 0.34, 0.24),  # peat / muck
+        "shore":   (0.55, 0.55, 0.38),  # reedy bank
+        "meadow":  (0.32, 0.45, 0.20),  # grass marsh
+        "forest":  (0.18, 0.28, 0.16),  # bog forest
+        "stone":   (0.40, 0.42, 0.34),  # damp slate
+        "alpine":  (0.50, 0.52, 0.48),  # cool rock
+        "snow":    (0.82, 0.86, 0.88),
+    },
+    "volcanic": {
+        "lakebed": (0.18, 0.16, 0.16),  # dark obsidian basin
+        "shore":   (0.30, 0.26, 0.24),  # cooled lava sand
+        "meadow":  (0.26, 0.22, 0.20),  # ash plain
+        "forest":  (0.16, 0.18, 0.16),  # sparse charred scrub
+        "stone":   (0.34, 0.28, 0.24),  # basalt
+        "alpine":  (0.38, 0.30, 0.26),  # weathered rock
+        "snow":    (0.62, 0.58, 0.55),  # ash dust, not white
+    },
+    "savanna": {
+        "lakebed": (0.42, 0.34, 0.22),  # dry watering hole
+        "shore":   (0.78, 0.68, 0.40),  # dusty pale earth
+        "meadow":  (0.62, 0.58, 0.30),  # tall yellow-green grass
+        "forest":  (0.36, 0.44, 0.20),  # acacia scrub
+        "stone":   (0.55, 0.46, 0.34),
+        "alpine":  (0.62, 0.54, 0.42),
+        "snow":    (0.88, 0.80, 0.62),  # bleached crest, never white
+    },
+    "tundra": {
+        "lakebed": (0.40, 0.42, 0.42),  # cold meltwater pool
+        "shore":   (0.58, 0.60, 0.58),  # frostbitten earth
+        "meadow":  (0.42, 0.46, 0.36),  # moss + low grass
+        "forest":  (0.24, 0.30, 0.22),  # taiga
+        "stone":   (0.48, 0.48, 0.48),
+        "alpine":  (0.62, 0.64, 0.66),  # cold rock
+        "snow":    (0.92, 0.94, 0.96),
+    },
+    "tropical": {
+        "lakebed": (0.20, 0.36, 0.30),  # turquoise lagoon floor
+        "shore":   (0.92, 0.88, 0.72),  # white coral sand
+        "meadow":  (0.30, 0.52, 0.22),  # lush jungle floor
+        "forest":  (0.16, 0.36, 0.16),  # deep canopy
+        "stone":   (0.50, 0.44, 0.34),  # warm volcanic-tropical rock
+        "alpine":  (0.62, 0.58, 0.52),
+        "snow":    (0.82, 0.86, 0.84),
+    },
+}
+
+
+def _resolve_palette(palette: dict[str, PaletteRGB] | None,
+                     preset: str | None) -> dict[str, PaletteRGB]:
+    """Layer order: explicit ``palette`` overrides win, then the named
+    ``preset`` fills in missing slots, then ``_DEFAULT_PALETTE`` (alpine)
+    fills any remaining gaps. Unknown preset names fall through silently
+    to alpine — typo shouldn't crash the build."""
+    base = _PALETTE_PRESETS.get((preset or "").lower(), _DEFAULT_PALETTE)
+    if not palette:
+        return base
+    out = dict(base)
+    out.update(palette)
+    return out
+
 
 def _srgb_to_linear(c: float) -> float:
     """sRGB-intent value → scene-linear, used so colors authored in the
@@ -702,6 +781,7 @@ def make_eroded_terrain(
     edge_floor: float | None = None,
     resolution: int = 256,
     palette: dict[str, PaletteRGB] | None = None,
+    palette_preset: str | None = None,
     smooth_shading: bool = True,
     water: bool = True,
     water_color: tuple[float, float, float, float] = (0.20, 0.42, 0.60, 0.8),
@@ -785,8 +865,7 @@ def make_eroded_terrain(
     import bpy
     import numpy as np
 
-    if palette is None:
-        palette = {}
+    palette = _resolve_palette(palette, palette_preset)
     if edge_floor is None:
         # Default: rim sits just above sea level so inland scenes don't
         # flood. Coastal prompts override with a sub-sea-level value.
