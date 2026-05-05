@@ -45,6 +45,12 @@ class Hero:
     # painterly Sky-CotL look. 2.0 = mesa-like sharp plateau (used for
     # fortress / monastery bases when the prompt explicitly calls for it).
     hardness: float = 1.2
+    # ``lift`` adds elevation above the local terrain BEFORE flattening,
+    # so the plateau sits ABOVE its surroundings. Default 0.0 = pure
+    # flatten (smooth out roughness, no elevation change). Use 1-3 BU
+    # for subtle elevated plateaus, 4+ BU for visible mesa lifts.
+    # Cap ``lift / radius < 0.4`` to avoid Gaussian-splat reading.
+    lift: float = 0.0
 
 
 @dataclass
@@ -438,6 +444,10 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
         target_z = hero.target_z
         if target_z is None:
             target_z = float(hero_height_sampler(hero.cx, hero.cy))
+        # Apply Hero.lift on top of the natural-height target, so the
+        # plateau sits above its surroundings. Default lift=0 means
+        # pure flatten (smooth the roughness; no elevation change).
+        target_z += float(getattr(hero, "lift", 0.0))
         H_out = flatten_radial(H_out, X, Y, hero.cx, hero.cy,
                                hero.radius, target_z, hero.hardness)
     if comp.paths:
@@ -453,6 +463,13 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
             return float(H_out[j, i])
 
         for path_idx, path in enumerate(comp.paths):
+            # Zero-depth path → colour-only band (apply_path_tint paints
+            # the corridor; no height carving). Sky paths are visible
+            # paint, not trenches. Skip valley_along entirely so we
+            # don't introduce resampling drift on what should be a
+            # geometric no-op.
+            if abs(float(path.depth)) < 1e-4:
+                continue
             # Resample with centripetal Catmull-Rom + binormal jitter so
             # straight LLM polylines bend organically. Stone roads stay
             # rigid (Romans graded their roads) — no jitter for stone.

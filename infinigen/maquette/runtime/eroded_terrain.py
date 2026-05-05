@@ -287,20 +287,36 @@ def _build_heightmap(
     warp_x = (q_x * 18.0 + r_x * 32.0).astype(np.float32)
     warp_y = (q_y * 18.0 + r_y * 32.0).astype(np.float32)
 
-    # Per-octave domain-warped FBM via map_coordinates (bilinear remap
-    # on a regular FBM grid). Reduced from 4 octaves (1.0 + 0.55 + 0.28
-    # + 0.13) to 2 (1.0 + 0.40). Sky CotL terrain has zero high-
-    # frequency detail; the upper octaves were producing the noisy
-    # "function on a grid" read the user kept calling out.
+    # Per-octave domain-warped FBM with **anisotropic stretch** along a
+    # seed-derived flow axis. Sky CotL terrain has visible direction —
+    # ridges run along the wind / valley axis — so stretching the noise
+    # 2.2× along one axis produces sweeping forms instead of equal-
+    # frequency-in-all-directions noise. Rotation theta varies with
+    # seed so different prompts get different ridge orientations.
+    #
+    # Reduced from 4 octaves to 2 (1.0 + 0.40); the upper octaves were
+    # producing the noisy "function on a grid" read.
+    theta = float(seed % 360) * (np.pi / 180.0)
+    cos_t, sin_t = np.cos(theta), np.sin(theta)
+    along_stretch = 0.45  # 2.2× longer wavelength along ridge axis
+
     fbm = np.zeros((res, res), dtype=np.float32)
+    Xw_world = X.astype(np.float32) + warp_x
+    Yw_world = Y.astype(np.float32) + warp_y
+    # Rotate world coords into ridge-aligned frame, stretch the along-axis.
+    along = (cos_t * Xw_world + sin_t * Yw_world) * along_stretch
+    cross = -sin_t * Xw_world + cos_t * Yw_world
     for amp, freq in [(1.0, 1.0), (0.40, 2.1)]:
         cx_axis = coords * freq / 28.0
         layer = nz_fbm.noise2array(cx_axis, cx_axis).astype(np.float32)
-        # Sample at warped coords (in pixel space).
-        wx_pix = ((X.astype(np.float32) + warp_x) + size) / span * (res - 1)
-        wy_pix = ((Y.astype(np.float32) + warp_y) + size) / span * (res - 1)
+        # Map (along, cross) world coords to pixel coords on the layer.
+        # `layer` is sampled on coords ∈ [-size, +size]; the stretched
+        # along-axis covers ~2.2× more world distance per pixel, so
+        # features appear elongated along the ridge.
+        ax_pix = (along + size) / span * (res - 1)
+        ay_pix = (cross + size) / span * (res - 1)
         warped = map_coordinates(
-            layer, [wy_pix, wx_pix], order=1, mode="reflect"
+            layer, [ay_pix, ax_pix], order=1, mode="reflect"
         ).astype(np.float32)
         fbm += amp * warped
     h += fbm * 1.0
@@ -952,11 +968,14 @@ def _decimate_terrain(obj, target_verts: int) -> None:
         # Try DISSOLVE (planar / angle-limited) first — preserves
         # silhouette ridges by collapsing co-planar faces only. Blender's
         # Decimate enum spells this ``DISSOLVE``; the docs/UI label it
-        # "Planar".
+        # "Planar". Angle limit was 5° which dissolved nearly everything
+        # on Sky-flat (post-peak-suppression) terrain — dropped to 1.5°
+        # so only NEAR-coplanar faces (broad meadow) get merged, ridge
+        # detail survives.
         mod_name = "TerrainLOD"
         mod = obj.modifiers.new(mod_name, "DECIMATE")
         mod.decimate_type = "DISSOLVE"
-        mod.angle_limit = math.radians(5.0)
+        mod.angle_limit = math.radians(1.5)
         mod.use_dissolve_boundaries = True
         try:
             bpy.ops.object.modifier_apply(modifier=mod_name)
@@ -1241,6 +1260,17 @@ def make_eroded_terrain(
     if bake_for_export is None:
         bake_for_export = _os.environ.get("MAQUETTE_BAKE_FOR_EXPORT", "0") == "1"
 
+    # Painterly mode peak-suppression — when the composition includes
+    # any Ridge primitive, drop the legacy ``peaks=`` Gaussian splats.
+    # The Ridge owns the silhouette; piling Gaussians on top of it
+    # produces the "stack of bumps" reading the user kept calling out.
+    # Empty-ridges scenes still respect peaks so explicit isolated-
+    # peak prompts (volcano, lone monolith) still work.
+    if composition is not None and getattr(composition, "ridges", None) and peaks:
+        print(f"[eroded_terrain] painterly mode: suppressing {len(peaks)} "
+              f"peaks in favour of {len(composition.ridges)} ridge(s)")
+        peaks = ()
+
     # Clamp incoming peak heights — Sky CotL terrain reads as serene/
     # horizontal, not Skyrim/vertical. The LLM brief asks for 8-12 BU
     # peaks but the model often pushes higher; this is a hard ceiling
@@ -1319,8 +1349,17 @@ def make_eroded_terrain(
                 # reads as a depression in meadow rather than a road.
                 COL = _infl.apply_path_tint(COL, _Xg, _Yg, composition)
             if composition.heroes:
-                # Dark plateau-edge ring — soft-cliff read around each Hero.
-                COL = _infl.apply_plateau_edge_ring(COL, _Xg, _Yg, composition)
+                # Dark plateau-edge ring — only for MESA heroes (sharp
+                # hardness >= 1.8). Painterly Gaussian-dome heroes
+                # (hardness ~1.0-1.4) don't need a ring; in fact the
+                # ring made the donut shape MORE visible. Filter and
+                # apply to a sub-composition.
+                from dataclasses import replace as _dc_replace
+                mesa_heroes = [h for h in composition.heroes
+                               if h.hardness >= 1.8]
+                if mesa_heroes:
+                    sub_comp = _dc_replace(composition, heroes=mesa_heroes)
+                    COL = _infl.apply_plateau_edge_ring(COL, _Xg, _Yg, sub_comp)
 
     res = resolution
     xs = np.linspace(-size, size, res, dtype=np.float32)
