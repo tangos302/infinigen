@@ -288,12 +288,12 @@ def _build_heightmap(
     warp_y = (q_y * 18.0 + r_y * 32.0).astype(np.float32)
 
     # Per-octave domain-warped FBM via map_coordinates (bilinear remap
-    # on a regular FBM grid). This vectorizes what used to be a row x
-    # octave Python loop and — more importantly — ACTUALLY warps in Y,
-    # not just X. Single-octave warp re-applied per band gets us the
-    # gnarled silhouette the legacy code was reaching for.
+    # on a regular FBM grid). Reduced from 4 octaves (1.0 + 0.55 + 0.28
+    # + 0.13) to 2 (1.0 + 0.40). Sky CotL terrain has zero high-
+    # frequency detail; the upper octaves were producing the noisy
+    # "function on a grid" read the user kept calling out.
     fbm = np.zeros((res, res), dtype=np.float32)
-    for amp, freq in [(1.0, 1.0), (0.55, 2.1), (0.28, 4.3), (0.13, 8.5)]:
+    for amp, freq in [(1.0, 1.0), (0.40, 2.1)]:
         cx_axis = coords * freq / 28.0
         layer = nz_fbm.noise2array(cx_axis, cx_axis).astype(np.float32)
         # Sample at warped coords (in pixel space).
@@ -305,10 +305,11 @@ def _build_heightmap(
         fbm += amp * warped
     h += fbm * 1.0
 
-    # Micro detail — uncorrelated, no warp. Keeps near-camera ground
-    # from looking like a smooth balloon.
+    # Micro detail — heavily reduced (was 0.25 amplitude). Painterly
+    # mode wants near-zero ground noise; Sky's foreground is glassy
+    # smooth. Keep a sliver so the meadow doesn't read as a balloon.
     micro = nz_micro.noise2array(coords / 6.0, coords / 6.0).astype(np.float32)
-    h += micro * 0.25
+    h += micro * 0.06
 
     # Ridged noise concentrated on alpine peaks.
     ridge = 1.0 - np.abs(nz_ridge.noise2array(coords / 9.0, coords / 9.0).astype(np.float32))
@@ -1340,12 +1341,13 @@ def make_eroded_terrain(
     for poly in me.polygons:
         poly.use_smooth = bool(smooth_shading)
 
-    # Painterly Sky-CotL terrain material — Toon BSDF Diffuse component
-    # gives Cycles a 2-step cel band for free, fed by the per-vertex Col
-    # attribute. This is the simplest viable painterly material; rim
-    # glossy is OFF for now (Layer Weight Facing routing was producing
-    # gold-blanket renders — re-enable as a small Fresnel-masked add
-    # once we verify the diffuse half reads right).
+    # Painterly Sky-CotL terrain material — pure Lambert / Diffuse BSDF
+    # fed by the per-vertex Col attribute. Sky's terrain shading is
+    # CONTINUOUS gradient (Lambert + IBL), NOT cel-banded. The earlier
+    # Toon BSDF made the terrain read as "flat indie cel-shaded" —
+    # different look than what we want. Plain Diffuse + a slight
+    # ambient-occlusion-already-in-Col gives the soft pastoral surface
+    # Sky uses on Daylight Prairie / Eden meadow.
     mat = bpy.data.materials.new("eroded_terrain_mat")
     mat.use_nodes = True
     nt = mat.node_tree
@@ -1357,12 +1359,10 @@ def make_eroded_terrain(
     attr = nt.nodes.new("ShaderNodeVertexColor")
     attr.layer_name = "Col"
 
-    toon_d = nt.nodes.new("ShaderNodeBsdfToon")
-    toon_d.component = "DIFFUSE"
-    toon_d.inputs["Size"].default_value = 0.55
-    toon_d.inputs["Smooth"].default_value = 0.05
-    nt.links.new(attr.outputs["Color"], toon_d.inputs["Color"])
-    nt.links.new(toon_d.outputs["BSDF"], out_node.inputs["Surface"])
+    diffuse = nt.nodes.new("ShaderNodeBsdfDiffuse")
+    diffuse.inputs["Roughness"].default_value = 1.0
+    nt.links.new(attr.outputs["Color"], diffuse.inputs["Color"])
+    nt.links.new(diffuse.outputs["BSDF"], out_node.inputs["Surface"])
     me.materials.append(mat)
 
     # Splat vertex attributes — five biome weights (grass/forest/rock/

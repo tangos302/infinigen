@@ -256,10 +256,15 @@ CRITICAL RULES:
       )
 
     Tuning rules:
+      * **Painterly Sky-CotL default**: keep peak heights MODEST (8-12 BU
+        above sea level). Reserve 14-22 BU for prompts that explicitly
+        say "mountain", "alps", "tall peak". Sky scenes are mostly
+        flat with one gentle hero silhouette — high peaks read as
+        Skyrim, not Sky.
       * Image references showing alpine peaks → 1 hero peak height
         14-22 BU, sigma 22-30, in the framed quadrant (e.g. NE).
       * Image with rolling plains + a single peak → keep plains
-        smooth (no extra peaks), single peak height 14-18.
+        smooth (no extra peaks), single peak height 8-12.
       * For a winding river: chain 5-7 troughs sigma 10-15 along
         the desired course, depth -3..-4. Don't overlap with peaks.
       * For "river through valley between mountains": peaks
@@ -1105,6 +1110,15 @@ def _scene_brief_block(map_size: str) -> str:
         "call must pass `exclude_polylines=path_pts, "
         "exclude_radius=path_width * 0.7`. The helper caches the mask after "
         "the first call.\n"
+        "- **Foreground stays empty** — Sky CotL foregrounds are conspicuously "
+        "open. Push scatter to mid- and far-ground by adding the camera "
+        "position as a degenerate exclusion polyline with a 25 BU radius:\n"
+        "  ```python\n"
+        "  exclude_polylines=[path_pts, [(cam_x, cam_y)]],\n"
+        "  exclude_radius=25.0  # camera-foreground stays clear\n"
+        "  ```\n"
+        "  Reserve foreground for *one* deliberate prop (the FOREGROUND_"
+        "ANCHOR) and otherwise keep it open meadow.\n"
         "- **Player spawn** — add an empty (`bpy.ops.object.empty_add(...)`) "
         "named exactly `Player_Spawn` at the first waypoint, "
         "Z = `terrain.height_at(x0,y0)+0.05`, rotated along the next-segment "
