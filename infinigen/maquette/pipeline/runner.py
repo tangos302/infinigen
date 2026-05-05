@@ -1194,7 +1194,15 @@ def call_claude(prompt: str, *, model: str | None = None,
             "`claude` CLI not found on PATH. Install Claude Code or "
             "ensure the binary is in PATH for this user."
         )
-    cmd = ["claude", "-p"]
+    # `--bare` skips CLAUDE.md auto-discovery, auto-memory loading, hooks,
+    # plugin sync, and background prefetches. Without it, the maquette
+    # runner inherits whatever project context the user happens to be
+    # in (e.g. /home/tang/songe/CLAUDE.md + auto-memory MEMORY.md), which
+    # eats context budget AND confuses the model — symptom we hit was
+    # Sonnet skipping the first half of the build script (imports +
+    # primary hero) and starting mid-section. The build prompt is fully
+    # self-contained, so bare mode is the right context.
+    cmd = ["claude", "-p", "--bare"]
     if model:
         cmd.extend(["--model", model])
     proc = subprocess.run(
