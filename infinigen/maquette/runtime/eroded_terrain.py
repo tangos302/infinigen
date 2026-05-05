@@ -1133,6 +1133,7 @@ def make_eroded_terrain(
     seed: int = 0,
     peaks: Sequence[Peak] = (),
     troughs: Sequence[Trough] = (),
+    max_peak_height: float | None = 12.0,
     plain_offset: float = 2.4,
     sea_level: float = 0.5,
     erode_iters: int = 4,
@@ -1240,10 +1241,31 @@ def make_eroded_terrain(
     if bake_for_export is None:
         bake_for_export = _os.environ.get("MAQUETTE_BAKE_FOR_EXPORT", "0") == "1"
 
-    print(f"[eroded_terrain] base heightmap (peaks={len(peaks)}, troughs={len(troughs)})")
+    # Clamp incoming peak heights — Sky CotL terrain reads as serene/
+    # horizontal, not Skyrim/vertical. The LLM brief asks for 8-12 BU
+    # peaks but the model often pushes higher; this is a hard ceiling
+    # so any peak above ``max_peak_height`` is capped at that value.
+    # Pass ``max_peak_height=None`` (or ``=30``) when an explicit
+    # "tall mountain" prompt asks for it.
+    clamped_peaks = list(peaks)
+    if max_peak_height is not None:
+        cap = float(max_peak_height)
+        clamped_peaks = [
+            (cx, cy, sigma, min(float(h), cap))
+            for (cx, cy, sigma, h) in clamped_peaks
+        ]
+        n_clamped = sum(
+            1 for orig, c in zip(peaks, clamped_peaks)
+            if abs(orig[3] - c[3]) > 1e-3
+        )
+        if n_clamped:
+            print(f"[eroded_terrain] clamped {n_clamped}/{len(peaks)} peaks "
+                  f"to max_peak_height={cap:.1f}")
+    print(f"[eroded_terrain] base heightmap (peaks={len(clamped_peaks)}, "
+          f"troughs={len(troughs)})")
     H0, alpine = _build_heightmap(
         resolution, float(size), int(seed),
-        list(peaks), list(troughs), float(plain_offset),
+        clamped_peaks, list(troughs), float(plain_offset),
         float(edge_falloff), float(edge_floor),
     )
     print(f"[eroded_terrain] eroding ({erode_iters} iter, deposition={deposition:.2f})")
