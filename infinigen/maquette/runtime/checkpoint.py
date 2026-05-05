@@ -93,6 +93,21 @@ def checkpoint(phase_name: str) -> str | None:
             except Exception:
                 pass
 
+    # Diag: log Col activeness right before export so we can see what
+    # the obj exporter saw. Triggered when SONGE_DEBUG_OBJ_COLORS=1.
+    import os as _os
+    if _os.environ.get("SONGE_DEBUG_OBJ_COLORS") == "1":
+        for o in bpy.data.objects:
+            if o.type != "MESH" or not o.data:
+                continue
+            ca = getattr(o.data, "color_attributes", None)
+            if not ca or not len(ca):
+                continue
+            ac = ca.active_color
+            print(f"[checkpoint-diag] {o.name}: "
+                  f"active={ac.name if ac else None} "
+                  f"attrs={[a.name+':'+a.domain for a in ca]}")
+
     obj_path = run_dir / "map.obj"
     if has_mesh:
         try:
