@@ -585,6 +585,134 @@ def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, Palett
     return np.clip(out, 0, 1)
 
 
+def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
+    """Lift the flat biome-band colour into a stylised low-poly read.
+
+    Two multiplicative-style passes, both pure numpy on the (res, res, 3)
+    colour grid:
+
+      1. **Slope tint** — cliffs (high gradient magnitude) lerp toward a
+         dark desaturated stone colour, so steep faces read as rock not
+         green sausages. The biggest "feels indie" win per line of code.
+      2. **HSV value jitter** — sample 2-octave value-noise at the grid
+         coords, quantise to ``{-1, 0, +1}`` × 4 % and shift the colour's
+         brightness. Each biome band becomes 3 quantised tints instead
+         of one flat fill, breaking the "topographic data" look without
+         introducing free-form noise.
+
+    AO is baked later (after the Blender mesh exists) and multiplied
+    into the same vertex-colour attribute. See ``_bake_ao_to_col``.
+    """
+    import numpy as np
+
+    out = np.array(col, dtype=np.float32, copy=True)
+
+    # 1. Slope tint.
+    gy, gx = np.gradient(elev)
+    slope = np.sqrt(gx * gx + gy * gy)
+    # Smoothstep over [0.35, 0.75] — flats untouched, mid slopes get a
+    # hint of rock, near-vertical faces fully lerp to the stone colour
+    # (darkened ~40 % so cliffs read with shadow weight).
+    s = np.clip((slope - 0.35) / 0.4, 0, 1)
+    s = s * s * (3.0 - 2.0 * s)
+    rock_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.6
+    out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
+
+    # 2. HSV-value jitter via cheap deterministic FBM.
+    res = elev.shape[0]
+    coords = np.indices((res, res), dtype=np.float32) / float(res)
+    seed_phase = float(seed) * 0.137
+    n1 = np.cos(coords[0] * 13.0 + seed_phase) * np.sin(coords[1] * 17.0 + seed_phase * 1.3)
+    n2 = np.cos(coords[0] * 37.0 + seed_phase * 2.1) * np.sin(coords[1] * 41.0 + seed_phase * 1.7)
+    fbm = 0.65 * n1 + 0.35 * n2  # roughly in [-1, +1]
+    # Quantise to {-1, 0, +1}; ~33 % land in each bucket.
+    qstep = np.where(fbm < -0.33, -1.0, np.where(fbm > 0.33, 1.0, 0.0))
+    tint = (qstep * 0.04)[..., None]  # ±4 % multiplicative brightness.
+    out = np.clip(out * (1.0 + tint), 0, 1)
+    return out
+
+
+def _bake_ao_to_col(obj, mesh, *, samples: int = 8, distance: float = 4.0):
+    """Cycles-bake AO into the active vertex colour attribute, then read
+    the values back and return as a (N,) numpy array. The attribute itself
+    is RESTORED to whatever was there before the bake — we use a temporary
+    side attribute as the bake target so the build-script-authored ``Col``
+    isn't clobbered. Returns None on bake failure (caller falls back to
+    leaving colours un-shadowed).
+
+    Cost: ~1-3s on a 32k-vert decimated terrain at 8 samples; acceptable
+    for the maquette pipeline. Cycles must be the active engine; we
+    save/restore the previous engine + bake target settings.
+    """
+    import bpy
+    import numpy as np
+
+    scene = bpy.context.scene
+    if scene is None:
+        return None
+
+    ao_name = "_AO_TEMP"
+    # Drop any leftover from a previous failed bake.
+    if ao_name in mesh.color_attributes:
+        mesh.color_attributes.remove(mesh.color_attributes[ao_name])
+    ao_attr = mesh.color_attributes.new(name=ao_name, type="FLOAT_COLOR", domain="POINT")
+    # Active color attribute = bake target.
+    prev_active = mesh.color_attributes.active_color
+    mesh.color_attributes.active_color = ao_attr
+
+    prev_engine = scene.render.engine
+    prev_target = scene.render.bake.target
+    prev_samples = scene.cycles.samples if hasattr(scene, "cycles") else None
+    prev_use_normalize = getattr(scene.render.bake, "use_pass_indirect", None)
+
+    scene.render.engine = "CYCLES"
+    scene.render.bake.target = "VERTEX_COLORS"
+    if hasattr(scene, "cycles"):
+        scene.cycles.samples = max(int(samples), 1)
+    bake_settings = scene.render.bake
+    if hasattr(bake_settings, "use_pass_direct"):
+        bake_settings.use_pass_direct = False
+    if hasattr(bake_settings, "use_pass_indirect"):
+        bake_settings.use_pass_indirect = False
+    if hasattr(bake_settings, "cage_extrusion"):
+        bake_settings.cage_extrusion = 0.0
+
+    # Cycles AO bake samples a hemisphere; ``distance`` controls how far
+    # the rays travel before hitting nothing. Larger = softer shadows
+    # (shoulders darken more), smaller = crisp local cavity. 4 BU is a
+    # good default for our 160 BU plane.
+    if hasattr(scene.world, "light_settings"):
+        scene.world.light_settings.distance = float(distance)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+    ao_array = None
+    try:
+        bpy.ops.object.bake(type="AO")
+        n = len(ao_attr.data)
+        flat = np.empty(n * 4, dtype=np.float32)
+        ao_attr.data.foreach_get("color", flat)
+        ao_array = flat.reshape(n, 4)[:, 0]
+    except Exception as exc:  # noqa: BLE001
+        print(f"[eroded_terrain] AO bake failed ({exc}); skipping AO pass")
+    finally:
+        # Restore engine + bake settings + clean up temp attribute.
+        scene.render.engine = prev_engine
+        scene.render.bake.target = prev_target
+        if prev_samples is not None and hasattr(scene, "cycles"):
+            scene.cycles.samples = prev_samples
+        if ao_name in mesh.color_attributes:
+            mesh.color_attributes.remove(mesh.color_attributes[ao_name])
+        if prev_active is not None:
+            try:
+                mesh.color_attributes.active_color = prev_active
+            except Exception:
+                pass
+    return ao_array
+
+
 def _decimate_terrain(obj, target_verts: int) -> None:
     """COLLAPSE-decimate the terrain mesh to ~target_verts.
 
@@ -915,6 +1043,12 @@ def make_eroded_terrain(
               f"water={'yes' if composition.water else 'no'})")
     print(f"[eroded_terrain] elevation range {H.min():.2f}..{H.max():.2f}")
     COL = _biome_colors(H, alpine, float(sea_level), palette)
+    # Stylised passes — slope tint + quantised palette jitter. Lifts
+    # the flat biome bands into a stylised low-poly read. Skip when
+    # realistic textures are on, since the PBR shader does its own
+    # painting from these colours and a slope-darken would double up.
+    if not realistic_textures:
+        COL = _apply_stylised_passes(H, COL, palette, seed=int(seed))
 
     res = resolution
     xs = np.linspace(-size, size, res, dtype=np.float32)
@@ -949,9 +1083,14 @@ def make_eroded_terrain(
     rgba[:, 3] = 1.0
     col_attr.data.foreach_set("color", rgba.flatten())
 
-    if smooth_shading:
-        for poly in me.polygons:
-            poly.use_smooth = True
+    # Stylised mode wants flat shading regardless of caller preference —
+    # smooth shading interpolates the per-vertex biome colours into
+    # gradients across the face, killing the hard band edges that make
+    # the low-poly look read. Realistic mode keeps smooth shading
+    # because its PBR shader paints continuous texture detail.
+    use_flat = not realistic_textures
+    for poly in me.polygons:
+        poly.use_smooth = (smooth_shading and not use_flat)
 
     mat = bpy.data.materials.new("eroded_terrain_mat")
     mat.use_nodes = True
@@ -1009,6 +1148,28 @@ def make_eroded_terrain(
                 _tt.write_splat_post_decimate(me, splat, float(size))
             except Exception as exc:
                 print(f"[eroded_terrain] post-decimate splat skipped ({type(exc).__name__}: {exc})")
+
+    # AO bake — Cycles AO into a temporary vertex attribute, multiply
+    # back into Col so concavities get a darker shoulder. Runs AFTER
+    # decimation so the AO matches the geometry that ships. Skipped in
+    # realistic mode because the PBR shader handles its own shadow term.
+    if not realistic_textures:
+        ao = _bake_ao_to_col(obj, me, samples=8, distance=4.0)
+        if ao is not None:
+            n_verts = len(me.vertices)
+            rgba_existing = np.empty(n_verts * 4, dtype=np.float32)
+            col_attr_post = me.color_attributes.get("Col")
+            if col_attr_post is not None and len(ao) == n_verts:
+                col_attr_post.data.foreach_get("color", rgba_existing)
+                rgba_existing = rgba_existing.reshape(n_verts, 4)
+                # Multiplier 0.65..1.0 — keeps concavities readable
+                # without making them muddy. Tweaked to taste.
+                ao_factor = 0.65 + 0.35 * np.clip(ao, 0, 1)
+                rgba_existing[:, :3] *= ao_factor[:, None]
+                rgba_existing = np.clip(rgba_existing, 0, 1)
+                col_attr_post.data.foreach_set("color", rgba_existing.flatten())
+                print(f"[eroded_terrain] AO baked into Col ({n_verts} verts, "
+                      f"min={ao.min():.2f} max={ao.max():.2f})")
 
     # Replace the vertex-color material with the realistic PBR shader
     # when textures + splat are available.
