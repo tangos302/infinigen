@@ -1194,15 +1194,7 @@ def call_claude(prompt: str, *, model: str | None = None,
             "`claude` CLI not found on PATH. Install Claude Code or "
             "ensure the binary is in PATH for this user."
         )
-    # `--bare` skips CLAUDE.md auto-discovery, auto-memory loading, hooks,
-    # plugin sync, and background prefetches. Without it, the maquette
-    # runner inherits whatever project context the user happens to be
-    # in (e.g. /home/tang/songe/CLAUDE.md + auto-memory MEMORY.md), which
-    # eats context budget AND confuses the model — symptom we hit was
-    # Sonnet skipping the first half of the build script (imports +
-    # primary hero) and starting mid-section. The build prompt is fully
-    # self-contained, so bare mode is the right context.
-    cmd = ["claude", "-p", "--bare"]
+    cmd = ["claude", "-p"]
     if model:
         cmd.extend(["--model", model])
     proc = subprocess.run(
@@ -1243,8 +1235,26 @@ def generate(user_prompt: str, *, model: str | None = None,
         mode=mode,
         map_size=map_size,
     )
+    # Sonnet stochastically truncates a complete build script to just the
+    # final sections (~50% of the time), producing a build.py that starts
+    # mid-function with no imports. Detect that here and retry once before
+    # we burn the failed-validator budget downstream. The check: a sane
+    # build always opens with `import bpy` (or `import math`) within the
+    # first 30 lines. If not, we got the truncated tail.
+    def _looks_truncated(script_text: str) -> bool:
+        head = script_text.lstrip().splitlines()[:30]
+        return not any(
+            line.startswith(("import bpy", "import math", "import os",
+                             "import random", "import sys", "from pathlib"))
+            for line in head
+        )
+
     response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
     script = extract_script(response)
+    if _looks_truncated(script):
+        print("[runner] extracted script appears truncated (no imports in first 30 lines); retrying once")
+        response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
+        script = extract_script(response)
     requested = extract_requested_assets(script)
     narrative = extract_debug_narrative(response) if debug else None
     plan = extract_scene_plan(response) if debug else None
