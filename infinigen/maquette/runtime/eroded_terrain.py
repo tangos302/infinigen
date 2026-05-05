@@ -1187,6 +1187,20 @@ def make_eroded_terrain(
         except Exception as exc:
             print(f"[eroded_terrain] realistic material skipped ({type(exc).__name__}: {exc})")
 
+    # Pin ``Col`` as the active color attribute — Blender's
+    # ``wm.obj_export(export_colors=True)`` writes ONLY the active
+    # color attribute as ``v X Y Z R G B``. Decimation, AO bake, and
+    # realistic-textures material setup all touch ``active_color`` and
+    # can leave it pointing somewhere else (or at a now-deleted attr).
+    # Without this pin the OBJ exports with bare ``v X Y Z`` and the
+    # browser viewer reads every terrain vertex as the unset 0.8 grey.
+    col_for_export = me.color_attributes.get("Col")
+    if col_for_export is not None:
+        try:
+            me.color_attributes.active_color = col_for_export
+        except Exception as exc:
+            print(f"[eroded_terrain] could not pin Col active ({exc})")
+
     # Bake the realistic shader for glTF export. Procedural Voronoi +
     # Splat-driven mixes don't make it through ``export_scene.gltf``;
     # this collapses them to flat 2D textures + a Principled BSDF.

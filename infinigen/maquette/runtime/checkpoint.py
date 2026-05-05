@@ -74,6 +74,25 @@ def checkpoint(phase_name: str) -> str | None:
             # safe to skip — it doesn't belong in the OBJ export anyway.
             continue
 
+    # Pin ``Col`` as active color attribute on any mesh that has one —
+    # ``wm.obj_export(export_colors=True)`` only writes the active color
+    # attribute. Decimation, AO bakes, and material swaps can leave it
+    # pointing at a different (or now-deleted) attribute, in which case
+    # the OBJ exports with bare ``v X Y Z`` and the browser viewer reads
+    # every terrain vertex as the unset 0.8 grey default.
+    for o in bpy.data.objects:
+        if o.type != "MESH" or not o.data:
+            continue
+        ca = getattr(o.data, "color_attributes", None)
+        if ca is None:
+            continue
+        col = ca.get("Col")
+        if col is not None:
+            try:
+                ca.active_color = col
+            except Exception:
+                pass
+
     obj_path = run_dir / "map.obj"
     if has_mesh:
         try:
