@@ -1049,6 +1049,17 @@ def make_eroded_terrain(
     # painting from these colours and a slope-darken would double up.
     if not realistic_textures:
         COL = _apply_stylised_passes(H, COL, palette, seed=int(seed))
+        # Path tint — paint Pathway corridors with their archetype
+        # colour (dirt/stone/wood/sand). The carve in apply_composition
+        # only changed terrain HEIGHT; without this pass the carved
+        # path keeps its biome colour and reads as a depression in
+        # meadow rather than an actual road.
+        if composition is not None and composition.paths:
+            from infinigen.maquette.runtime import influence as _infl
+            _coords = np.linspace(-float(size), float(size), int(resolution),
+                                  dtype=np.float32)
+            _Xg, _Yg = np.meshgrid(_coords, _coords)
+            COL = _infl.apply_path_tint(COL, _Xg, _Yg, composition)
 
     res = resolution
     xs = np.linspace(-size, size, res, dtype=np.float32)

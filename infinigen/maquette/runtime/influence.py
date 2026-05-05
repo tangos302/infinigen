@@ -62,6 +62,12 @@ class Pathway:
     width: float = 2.5
     depth: float = 0.0
     blend: float = 1.5
+    # Visual archetype — drives the colour painted into the corridor's
+    # vertex-colour band. ``dirt`` (warm tan), ``stone`` (cool grey),
+    # ``wood`` (boardwalk plank), ``sand`` (desert track). Anything else
+    # falls through to dirt. The LLM picks this from prompt context;
+    # match the ``# PATH_ARCHETYPE`` tag for consistency.
+    archetype: str = "dirt"
 
 
 @dataclass
@@ -278,6 +284,56 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
         w = comp.water
         H_out = basin_radial(H_out, X, Y, w.cx, w.cy, w.radius, w.depth)
     return H_out
+
+
+# Path archetype → linear-RGB tint applied inside the corridor mask.
+# These are sRGB-intent values; eroded_terrain.py converts via the same
+# linear pipeline as the biome palette before writing to vertex colours.
+_PATH_COLORS: dict[str, tuple[float, float, float]] = {
+    "dirt":  (0.42, 0.32, 0.20),  # warm tan, slightly damp
+    "stone": (0.50, 0.48, 0.44),  # cool grey cobble
+    "wood":  (0.45, 0.30, 0.18),  # boardwalk plank
+    "sand":  (0.78, 0.68, 0.46),  # desert track, bright
+}
+
+
+def apply_path_tint(col: np.ndarray, X: np.ndarray, Y: np.ndarray,
+                    comp: Composition | None,
+                    *,
+                    strength: float = 0.85) -> np.ndarray:
+    """Paint each ``Pathway`` corridor with its archetype colour.
+
+    For every cell within ``width/2`` of the path's polyline, the
+    biome colour is lerped toward the archetype's tint by
+    ``mask * strength``. Outside the corridor and through the ``blend``
+    feather, no change. Returns a NEW colour grid; does not mutate
+    ``col``. Operates in linear RGB to match the eroded_terrain
+    palette pipeline.
+    """
+    if comp is None or not comp.paths:
+        return col
+    import numpy as _np
+    out = _np.array(col, dtype=_np.float32, copy=True)
+    for path in comp.paths:
+        d = _polyline_distance(X, Y, path.waypoints)
+        half = float(path.width) * 0.5
+        mask = 1.0 - _smoothstep(half, half + float(path.blend), d)
+        w = (mask * float(strength))[..., None]
+        rgb_srgb = _PATH_COLORS.get(path.archetype, _PATH_COLORS["dirt"])
+        # Convert sRGB-intent to linear so the path colour sits on the
+        # same scale as the biome palette (which is already linear).
+        target = _np.array([_srgb_to_linear(c) for c in rgb_srgb], dtype=_np.float32)
+        out = out * (1.0 - w) + target * w
+    return out.astype(_np.float32)
+
+
+def _srgb_to_linear(c: float) -> float:
+    """Local copy of the sRGB→linear conversion (the eroded_terrain
+    palette uses the same formula). Kept here so influence.py stays
+    free of cross-module imports."""
+    if c <= 0.04045:
+        return c / 12.92
+    return ((c + 0.055) / 1.055) ** 2.4
 
 
 def erosion_mask(X: np.ndarray, Y: np.ndarray,
