@@ -568,12 +568,13 @@ terrain = make_terrain(
 #             lake_z = terrain.height_at(cx, cy) - 0.3
 
 # 3. Camera + sun + world background
-bpy.ops.object.camera_add(location=(<X>, <Y>, <Z>))
-cam = bpy.context.active_object
-target = Vector((<tx>, <ty>, <tz>))
-cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
-cam.data.lens = 35
-bpy.context.scene.camera = cam
+# Camera is auto-placed by `place_scene_camera(composition, terrain_size=...)` —
+# DO NOT call `bpy.ops.object.camera_add` or set cam.location yourself.
+# The runtime helper picks framing from your Composition (hero + water +
+# ridge) so the watchtower silhouettes against sky and the lake sits in
+# foreground. Pass the same composition you handed to make_eroded_terrain.
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(composition, terrain_size=80)
 
 bpy.ops.object.light_add(type="SUN", location=(<X>, <Y>, <Z>))
 sun = bpy.context.active_object
@@ -662,12 +663,19 @@ Use the closest existing factory as a stand-in (e.g. crystal-foliage
 trees for dead trees, stone_wall fence for tombstones if Tombstone is
 missing) and CONTINUE building the scene. Do not refuse to build.
 
-### Camera framing
+### Camera framing — auto-placed
 
-Use `cam.data.lens = 35` for wide scene shots and `lens = 50` for tight
-prop shots. For an oblique-aerial scene view of a size=80 (160 BU wide)
-world, the camera at `(40, -44, 26)` looking at `(0, 0, 3)` frames the
-full scene cleanly. Scale linearly with terrain size if you change it.
+DO NOT author the camera. Call:
+
+```python
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(composition, terrain_size=80)
+```
+
+The helper picks framing from your `Composition`: hero + water →
+camera past the lake looking at the hero, hero + ridge → camera
+perpendicular to the ridge axis. Pass `lens_mm=50` for tight prop
+shots; default 35 mm is the wide scene default.
 
 ---
 
@@ -916,12 +924,9 @@ terrain = make_terrain(
 #    spawn_asset(i, loc) like upstream Infinigen.
 
 # 3. Camera + sun + world background — same recipes as low-poly mode.
-bpy.ops.object.camera_add(location=(<X>, <Y>, <Z>))
-cam = bpy.context.active_object
-target = Vector((<tx>, <ty>, <tz>))
-cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
-cam.data.lens = 35
-bpy.context.scene.camera = cam
+# Camera is auto-placed; do not call camera_add yourself.
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(composition, terrain_size=80)
 
 bpy.ops.object.light_add(type="SUN", location=(<X>, <Y>, <Z>))
 sun = bpy.context.active_object
@@ -1012,12 +1017,19 @@ Use the closest existing factory as a stand-in (e.g. RealisticBushFactory
 for shrubs, RealisticTreeFactory(archetype="winter") for dead trees) and
 CONTINUE building the scene. Do not refuse to build.
 
-### Camera framing
+### Camera framing — auto-placed
 
-Use `cam.data.lens = 35` for wide scene shots and `lens = 50` for tight
-prop shots. For an oblique-aerial scene view of a size=80 (160 BU wide)
-world, the camera at `(40, -44, 26)` looking at `(0, 0, 3)` frames the
-full scene cleanly. Scale linearly with terrain size if you change it.
+DO NOT author the camera. Call:
+
+```python
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(composition, terrain_size=80)
+```
+
+The helper picks framing from your `Composition`: hero + water →
+camera past the lake looking at the hero, hero + ridge → camera
+perpendicular to the ridge axis. Pass `lens_mm=50` for tight prop
+shots; default 35 mm is the wide scene default.
 
 ---
 

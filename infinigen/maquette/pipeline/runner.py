@@ -901,14 +901,12 @@ def _scene_brief_block(map_size: str) -> str:
             "(a) primary in NE, supporting in SW + W; "
             "(b) primary in S, supporting in N + E; "
             "(c) primary in NW, supporting in SE + center.\n\n"
-            "**Camera framing for 3-hero scenes:** target the *centroid* "
-            "of the three heroes (`((px+s1x+s2x)/3, (py+s1y+s2y)/3, ...)`), "
-            "NOT just the primary's position. Pull the camera back far "
-            "enough that all three heroes project inside the frame "
-            "(camera distance ≥ 1.6× the diameter of the hero triangle). "
-            "Use a 28-30 mm lens for wide multi-hero scenes (`cam.data.lens"
-            " = 28`) instead of the default 35 mm — the wider FOV lets "
-            "all three read as distinct beats."
+            "**Camera framing is auto-placed** by "
+            "`place_scene_camera(composition, terrain_size=80)`. Don't "
+            "author camera location yourself; the helper picks framing "
+            "from your Composition (hero + water → camera past lake; "
+            "hero + ridge → camera perpendicular to ridge axis). For "
+            "multi-hero scenes pass `lens_mm=28` so all heroes fit."
         )
     else:  # xl, future
         hero_phrasing = (
@@ -917,8 +915,9 @@ def _scene_brief_block(map_size: str) -> str:
             "scene as a small region with multiple settlements / vistas. "
             "Tag each in comments: `# HERO: primary — ...`, "
             "`# HERO: supporting — ...`. All heroes occupy distinct "
-            "quadrants, pairwise XY distance ≥ 16 BU. Camera targets "
-            "the heroes' centroid; lens 24-28 mm."
+            "quadrants, pairwise XY distance ≥ 16 BU. Camera is "
+            "auto-placed via `place_scene_camera(composition, "
+            "terrain_size=80, lens_mm=24)`."
         )
 
     # Quadrant table — appears once per brief regardless of hero count.

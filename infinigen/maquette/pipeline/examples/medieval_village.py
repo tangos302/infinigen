@@ -171,14 +171,14 @@ for i in range(10):
 checkpoint("props")  # fences, lanterns, barrels, crates, riprap — last geometry pass
 
 # 9. Camera + golden-hour sun + warm sky.
-# Camera distance scales with the terrain size — for a size=80 world
-# we sit further back so the full scene fits in frame.
-bpy.ops.object.camera_add(location=(40, -44, 26))
-cam = bpy.context.active_object
-target = Vector((0, 0, 3))
-cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
-cam.data.lens = 35
-bpy.context.scene.camera = cam
+# Camera is auto-placed by the runtime helper — pass the same
+# composition and terrain_size you used to build the heightmap.
+# This example uses flat make_terrain (no Composition), so pass None
+# and the helper falls back to the SW-quadrant default. Real eroded
+# scenes pass `composition=composition` (the variable holding the
+# Composition object you handed to make_eroded_terrain).
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(None, terrain_size=80)
 
 bpy.ops.object.light_add(type="SUN", location=(8, -5, 12))
 sun = bpy.context.active_object
