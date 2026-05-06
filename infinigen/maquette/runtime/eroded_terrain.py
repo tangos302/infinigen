@@ -358,9 +358,14 @@ def _build_heightmap(
         h += (1.4 * np.sin(2 * np.pi * (dune_dir[0] * X + dune_dir[1] * Y) / 45.0 + 0.3)).astype(np.float32)
         h += (0.6 * np.sin(2 * np.pi * (dune_dir2[0] * X + dune_dir2[1] * Y) / 80.0)).astype(np.float32)
 
-    # Ridged noise concentrated on alpine peaks.
-    ridge = 1.0 - np.abs(nz_ridge.noise2array(coords / 9.0, coords / 9.0).astype(np.float32))
-    h += (ridge ** 2) * 5.0 * alpine_mask
+    # Ridged noise concentrated on alpine peaks. Skipped on the dunes
+    # (desert) palette: the high-frequency ridges read as spike noise on
+    # top of the smooth sinusoidal dune layer instead of the alpine
+    # crags they're designed for. Any peak ≥12 BU still gets shape from
+    # the FBM + warp passes; it just doesn't get the ridged crust.
+    if not dunes:
+        ridge = 1.0 - np.abs(nz_ridge.noise2array(coords / 9.0, coords / 9.0).astype(np.float32))
+        h += (ridge ** 2) * 5.0 * alpine_mask
 
     h += plain_offset
 
