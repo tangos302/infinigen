@@ -1352,6 +1352,12 @@ def call_claude(prompt: str, *, model: str | None = None,
         if k not in ("CLAUDE_PROJECT_DIR", "PWD", "OLDPWD")
     }
     pipeline_env["PWD"] = "/tmp"
+    # Sonnet's build scripts now run 4-8 k lines (~25-40 k tokens) with
+    # the Round 6 brief (Hoodoo/Arch/Pillar SDFs, A* paths, two-tone
+    # rock, Voronoi biome drift). Default 32k cap aborts mid-script.
+    # 64k gives generous headroom; honour any pre-set env var so the
+    # user can override per-shell.
+    pipeline_env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000")
     proc = subprocess.run(
         cmd,
         input=prompt,
