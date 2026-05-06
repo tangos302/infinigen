@@ -298,7 +298,7 @@ def _build_heightmap(
     # producing the noisy "function on a grid" read.
     theta = float(seed % 360) * (np.pi / 180.0)
     cos_t, sin_t = np.cos(theta), np.sin(theta)
-    along_stretch = 0.45  # 2.2× longer wavelength along ridge axis
+    along_stretch = 0.62  # 1.6× longer wavelength along ridge axis (was 0.45 = 2.2× — produced visible corrugated stripes)
 
     fbm = np.zeros((res, res), dtype=np.float32)
     Xw_world = X.astype(np.float32) + warp_x
@@ -698,6 +698,27 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
         crest = np.clip(crest / max_pos, 0, 1)
         crest = crest * crest  # square so only sharpest ridges hit
         out = np.clip(out * (1.0 + 0.10 * crest[..., None]), 0, 1)
+    except Exception:
+        pass
+
+    # 5. Surface character — occasional rocky / dirt patches. Sample a
+    # coarse Voronoi via low-frequency noise; cells with the lowest
+    # ~12 % values get tinted toward a darker desaturated rock colour.
+    # Reads as "scattered rocky outcrops" without breaking the calm
+    # meadow read. Sky CotL has occasional dirt-patch breakup like this.
+    try:
+        from opensimplex import OpenSimplex
+        nz_patch = OpenSimplex(seed=int(seed) + 41)
+        # Per-cell sample; one octave at ~22 BU wavelength.
+        coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 22.0)
+        patch_field = nz_patch.noise2array(coords1d, coords1d).astype(np.float32)
+        # Threshold to bottom ~12 % of cells (organic patches, sparse).
+        patch_mask = np.clip((-patch_field - 0.55) / 0.30, 0, 1)
+        patch_mask = patch_mask * patch_mask  # square for sharper edges
+        rock_patch_rgb = np.array(
+            _palette_linear("stone", palette), dtype=np.float32) * 0.55
+        m = patch_mask[..., None]
+        out = np.clip(out * (1.0 - 0.45 * m) + rock_patch_rgb * 0.45 * m, 0, 1)
     except Exception:
         pass
 
@@ -1582,11 +1603,12 @@ def make_eroded_terrain(
             me.vertices.foreach_get("co", vflat)
             vxyz = vflat.reshape(n_v, 3)
             dist = np.linalg.norm(vxyz - anchor, axis=1)
-            # Fade ramp tuned to scene size — starts at 0.4×size,
-            # saturates at 1.2×size. Max blend 0.45 reads as warm haze
-            # without washing out distant heroes.
-            fade_lo = float(size) * 0.4
-            fade_hi = float(size) * 1.2
+            # Fade ramp tuned to scene size — starts at 0.7×size, sat-
+            # urates at 1.6×size, max blend 0.30 (pulled back from 0.4
+            # / 1.2 / 0.45 — earlier ramp washed the mid-ground ridge
+            # silhouette into the sky before it could read).
+            fade_lo = float(size) * 0.7
+            fade_hi = float(size) * 1.6
             fog_t = np.clip((dist - fade_lo) / max(fade_hi - fade_lo, 1.0),
                             0.0, 1.0)
             sky_lin = np.array([0.78, 0.72, 0.65], dtype=np.float32)
@@ -1595,7 +1617,7 @@ def make_eroded_terrain(
                 rgba_d = np.empty(n_v * 4, dtype=np.float32)
                 ca.data.foreach_get("color", rgba_d)
                 rgba_d = rgba_d.reshape(n_v, 4)
-                blend = (fog_t * 0.45)[:, None]
+                blend = (fog_t * 0.30)[:, None]
                 rgba_d[:, :3] = rgba_d[:, :3] * (1 - blend) + sky_lin * blend
                 ca.data.foreach_set("color", rgba_d.flatten())
                 print(f"[eroded_terrain] aerial perspective baked "
