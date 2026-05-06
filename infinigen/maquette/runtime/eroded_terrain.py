@@ -812,7 +812,7 @@ def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, Palett
     return np.clip(out, 0, 1)
 
 
-def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = False):
+def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = False, palette_preset: str | None = None):
     """Lift the flat biome-band colour into a stylised low-poly read.
 
     Two multiplicative-style passes, both pure numpy on the (res, res, 3)
@@ -917,12 +917,45 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     half = np.clip((lambert + 1.0) * 0.5, 0.0, 1.0).astype(np.float32)
     # Smoothstep for painterly transition (linear ramp would look CG).
     half = (half * half * (3.0 - 2.0 * half)).astype(np.float32)
-    # Two-tone tint: shadow side = cool desaturated, lit side = warm.
-    # Both expressed as RGB multipliers on the existing biome color
-    # so the palette story is preserved — only the value+temperature
-    # shift to match the lighting direction.
-    cool_shadow = np.array([0.68, 0.78, 0.95], dtype=np.float32)  # cool-blue desat
-    warm_lit    = np.array([1.12, 1.04, 0.88], dtype=np.float32)  # warm-amber tint
+    # Two-tone tint: shadow side and lit side. Both are RGB multipliers
+    # on the existing biome color so palette story is preserved — only
+    # value + temperature shift per lighting direction.
+    #
+    # Per-palette color stories (Sky CotL approach: each region has its
+    # own emotional color narrative). Each palette specifies:
+    #   * cool_shadow: shadow-side multiplier — typically a desaturated
+    #     hue rotated 20-40° toward complement of the dominant biome
+    #     color (so shadows feel painted, not just darker).
+    #   * warm_lit:    lit-side multiplier — slight warm-lift toward
+    #     the palette's dominant emotional temperature.
+    # Default is dunes-style "warm-amber lit / cool-blue shadow" — the
+    # generic painterly look.
+    palette_name = (palette_preset or "").lower()
+    if dunes:
+        # Desert: shadows lean rust-ochre (sandstone), lit leans bright
+        # gold. Keeps the entire surface in the warm-tan emotional band.
+        cool_shadow = np.array([0.85, 0.72, 0.55], dtype=np.float32)
+        warm_lit    = np.array([1.12, 1.04, 0.78], dtype=np.float32)
+    elif palette_name == "tropical":
+        cool_shadow = np.array([0.72, 0.86, 0.92], dtype=np.float32)  # cool aqua shadow
+        warm_lit    = np.array([1.10, 1.04, 0.85], dtype=np.float32)  # bright lemon
+    elif palette_name == "volcanic":
+        cool_shadow = np.array([0.62, 0.68, 0.78], dtype=np.float32)  # slate-purple
+        warm_lit    = np.array([1.18, 1.00, 0.85], dtype=np.float32)  # ember orange
+    elif palette_name == "savanna":
+        cool_shadow = np.array([0.78, 0.82, 0.92], dtype=np.float32)
+        warm_lit    = np.array([1.14, 1.04, 0.78], dtype=np.float32)
+    elif palette_name == "wetland":
+        cool_shadow = np.array([0.74, 0.84, 0.85], dtype=np.float32)  # cool damp-green
+        warm_lit    = np.array([1.10, 1.06, 0.92], dtype=np.float32)
+    elif palette_name == "tundra":
+        cool_shadow = np.array([0.68, 0.78, 0.96], dtype=np.float32)  # cold blue-shadow
+        warm_lit    = np.array([1.06, 1.02, 0.96], dtype=np.float32)  # pale gold
+    else:
+        # alpine / default — Sky CotL Daylight Prairie / Sanctuary look.
+        # Cool-blue desaturated shadows, warm-amber lit areas.
+        cool_shadow = np.array([0.68, 0.78, 0.95], dtype=np.float32)
+        warm_lit    = np.array([1.12, 1.04, 0.88], dtype=np.float32)
     tint = (
         cool_shadow[None, None, :] * (1.0 - half[..., None])
         + warm_lit[None, None, :] * half[..., None]
@@ -1729,7 +1762,10 @@ def make_eroded_terrain(
     # realistic textures are on, since the PBR shader does its own
     # painting from these colours and a slope-darken would double up.
     if not realistic_textures:
-        COL = _apply_stylised_passes(H, COL, palette, seed=int(seed), dunes=dunes_active)
+        COL = _apply_stylised_passes(
+            H, COL, palette, seed=int(seed),
+            dunes=dunes_active, palette_preset=palette_preset,
+        )
         # Watercolour-paper screen-blend overlay — adds the painterly
         # "paper grain" wash Sky CotL surfaces have. Tile the 512²
         # grayscale texture across world XY at ~12 BU/tile, screen-
