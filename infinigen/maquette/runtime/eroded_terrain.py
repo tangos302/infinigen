@@ -1540,6 +1540,24 @@ def make_eroded_terrain(
         dunes=dunes_active,
     )
     if outflow_xy is not None:
+        # Sanity check: outflow only does what we want if it lands ON a
+        # rim. Warn (don't fail) if the requested point is far from any
+        # boundary — the helper still works, but the notch will sit at
+        # whichever rim is closest, which probably isn't what the caller
+        # meant. Threshold = 12 BU (a noticeable fraction of the half-
+        # extent for a typical size=140 world).
+        ox, oy = float(outflow_xy[0]), float(outflow_xy[1])
+        rim_distance = min(
+            abs(ox + float(size)), abs(ox - float(size)),
+            abs(oy + float(size)), abs(oy - float(size)),
+        )
+        if rim_distance > 12.0:
+            print(
+                f"[eroded_terrain] WARNING: outflow_xy={outflow_xy} is "
+                f"{rim_distance:.1f} BU from the nearest rim "
+                f"(world half-extent={size:.0f}); notch will snap to that "
+                f"rim regardless. Pass an XY near a rim for predictable results."
+            )
         H0 = _carve_outflow_notch(
             H0,
             world_size=float(size),
