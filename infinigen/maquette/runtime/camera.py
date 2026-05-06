@@ -42,6 +42,7 @@ def place_scene_camera(
     composition: Any,
     *,
     terrain_size: float,
+    terrain: Any = None,
     lens_mm: float = 35.0,
     pitch_deg: float = 22.0,
     distance_factor: float = 1.45,
@@ -57,8 +58,16 @@ def place_scene_camera(
     terrain_size : float
         Half-extent of the terrain in BU (the ``size`` you passed to
         ``make_terrain`` / ``make_eroded_terrain``).
+    terrain : terrain handle | None
+        The object returned by ``make_eroded_terrain`` (must expose
+        ``height_at(x, y)``). When supplied, the camera target Z is
+        sampled from terrain at the hero position, so a hero on a
+        12 BU peak is centered in frame instead of cropped at the top.
+        Without it, target Z falls back to ``hero.target_z + lift``.
     lens_mm : float
-        Focal length. 35 mm = wide scene, 50 mm = tighter prop.
+        Focal length. 35 mm is the wide scene default and what almost
+        every prompt should use. ONLY pass 50 mm for explicit
+        single-prop close-ups (rare); 28 mm for 4+ hero panoramas.
     pitch_deg : float
         Above-horizon angle. 22° is the painterly default.
     distance_factor : float
@@ -80,12 +89,22 @@ def place_scene_camera(
     if composition is not None and getattr(composition, "heroes", None):
         primary = composition.heroes[0]
         target_xy = (float(primary.cx), float(primary.cy))
-        # Lift target Z by a few BU so the camera is "looking AT the
-        # tower top," not at the ground beneath it.
-        target_z_extra = (
-            float(getattr(primary, "lift", 0.0)) + 3.5
+        # Prefer the actual terrain height under the hero — this avoids
+        # aiming at z=0 when the hero sits on a 12 BU peak.
+        if terrain is not None and hasattr(terrain, "height_at"):
+            try:
+                ground_z = float(terrain.height_at(target_xy[0], target_xy[1]))
+            except Exception:
+                ground_z = 0.0
+        else:
+            ground_z = float(getattr(primary, "target_z", None) or 0.0)
+        # Tower-top offset: hero radius scales the framing target so a
+        # tall structure (radius 15-20) gets aimed at its mid-height,
+        # not its base.
+        head_extra = float(getattr(primary, "lift", 0.0)) + max(
+            float(getattr(primary, "radius", 8.0)) * 0.4, 4.0
         )
-        target_z = float(getattr(primary, "target_z", None) or 0.0) + target_z_extra
+        target_z = ground_z + head_extra
     else:
         target_xy = (0.0, 0.0)
         target_z = 3.0

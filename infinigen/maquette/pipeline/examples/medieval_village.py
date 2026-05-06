@@ -171,14 +171,13 @@ for i in range(10):
 checkpoint("props")  # fences, lanterns, barrels, crates, riprap — last geometry pass
 
 # 9. Camera + golden-hour sun + warm sky.
-# Camera is auto-placed by the runtime helper — pass the same
-# composition and terrain_size you used to build the heightmap.
-# This example uses flat make_terrain (no Composition), so pass None
-# and the helper falls back to the SW-quadrant default. Real eroded
-# scenes pass `composition=composition` (the variable holding the
-# Composition object you handed to make_eroded_terrain).
+# Camera is auto-placed by the runtime helper. ALWAYS pass `terrain=terrain`
+# so the camera target Z is sampled from the actual ground (not z=0).
+# Real eroded scenes also pass `composition=<your Composition>` so the
+# helper picks lake-foreground / ridge-perpendicular framing. Flat
+# make_terrain example here uses None for composition.
 from infinigen.maquette.runtime.camera import place_scene_camera
-place_scene_camera(None, terrain_size=80)
+place_scene_camera(None, terrain_size=80, terrain=terrain)
 
 bpy.ops.object.light_add(type="SUN", location=(8, -5, 12))
 sun = bpy.context.active_object

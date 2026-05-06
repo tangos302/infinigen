@@ -902,11 +902,13 @@ def _scene_brief_block(map_size: str) -> str:
             "(b) primary in S, supporting in N + E; "
             "(c) primary in NW, supporting in SE + center.\n\n"
             "**Camera framing is auto-placed** by "
-            "`place_scene_camera(composition, terrain_size=80)`. Don't "
-            "author camera location yourself; the helper picks framing "
-            "from your Composition (hero + water → camera past lake; "
-            "hero + ridge → camera perpendicular to ridge axis). For "
-            "multi-hero scenes pass `lens_mm=28` so all heroes fit."
+            "`place_scene_camera(composition, terrain_size=80, "
+            "terrain=terrain)`. Don't author camera location yourself; "
+            "the helper picks framing from your Composition (hero + "
+            "water → camera past lake; hero + ridge → camera "
+            "perpendicular to ridge axis). ALWAYS pass `terrain=terrain` "
+            "so target Z is sampled correctly. Don't pass `lens_mm` — "
+            "35 mm default is right for 3-hero scenes."
         )
     else:  # xl, future
         hero_phrasing = (
@@ -917,7 +919,7 @@ def _scene_brief_block(map_size: str) -> str:
             "`# HERO: supporting — ...`. All heroes occupy distinct "
             "quadrants, pairwise XY distance ≥ 16 BU. Camera is "
             "auto-placed via `place_scene_camera(composition, "
-            "terrain_size=80, lens_mm=24)`."
+            "terrain_size=80, terrain=terrain, lens_mm=24)`."
         )
 
     # Quadrant table — appears once per brief regardless of hero count.
