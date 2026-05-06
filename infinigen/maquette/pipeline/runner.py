@@ -84,12 +84,12 @@ CRITICAL RULES:
        reads as empty. Push 100+ trees, 20-30 buildings, 60+ boulders,
        and scatter them across the whole map (not just a ring).
 
-6. DO NOT add `ShaderNodeVolumeScatter`, `ShaderNodeVolumeAbsorption`,
-   any world-volume effects, or fog/mist/haze volumetrics. They render
-   pure black at the low sample counts (32-48) we use. If the prompt
-   mentions "fog", "mist", "haze", "dust", express it through the world
-   background colour and sun warmth/dimness instead — never via a Volume
-   shader.
+6. DO NOT author **world-output** volume effects (volume scatter on
+   `ShaderNodeOutputWorld`). World volumes fill infinite space and
+   black out the sun. The ONLY allowed atmospheric path is calling
+   `add_aerial_perspective(...)` from `infinigen.maquette.runtime.
+   composition` — that helper spawns a bounded cube around the scene
+   and is sample-safe. Never wire a Volume shader yourself.
 
 7. Use the standard `archetype` parameter names from the catalog —
    `building_archetype`, `foliage_archetype`, `trunk_archetype`,
@@ -1059,25 +1059,13 @@ def _scene_brief_block(map_size: str) -> str:
         "landmarks reads as a procedural-generator shortcut. Branches reuse "
         "a waypoint of the trunk so they connect visually; narrower (~1.8 "
         "BU) and slightly shallower than the trunk so the trunk reads as "
-        "primary. **Path waypoints are A*-refined automatically** — "
-        "if your straight-line segment crosses a cliff face (gradient "
-        ">22°) the runtime re-routes the corridor around it on a "
-        "downsampled heightmap. Emit anchor points in the topology you "
-        "want; don't hand-author saddle detours.\n"
-        "- **Hoodoo / Arch / Pillar (SDF landmarks)** — full-3D rock "
-        "forms the heightmap can't represent (overhangs, mushroom caps, "
-        "gateway openings). Built via marching cubes as separate meshes; "
-        "use sparingly (1-2 per scene). Examples:\n"
-        "  - `Hoodoo(cx=-25, cy=-15, height=9, base_radius=1.6, "
-        "cap_radius_factor=1.4)` — Wasteland-style mushroom column\n"
-        "  - `Arch(cx=20, cy=-25, span=8, height=7, thickness=2, "
-        "orientation_deg=20)` — natural rock gateway\n"
-        "  - `Pillar(cx=12, cy=30, height=12, radius=2)` — sea-stack monolith\n"
-        "  Use Arch for prompts mentioning 'gateway / arch / portal'; "
-        "Hoodoo for 'spire / pinnacle / weathered rock / Wasteland'; "
-        "Pillar for 'sea stack / monolith / archipelago'. Place via "
-        "``Composition(landmarks=[...])``. Landmarks auto-snap their "
-        "base to ``terrain.height_at(cx, cy)``.\n"
+        "primary.\n"
+        "- **Hoodoo / Arch / Pillar** — SDF landmarks for overhangs / "
+        "gateways / sea-stacks. Use 1-2 only when the prompt names "
+        "arches, spires, pinnacles, sea stacks, or weathered rock. "
+        "`Hoodoo(cx, cy, height)`, `Arch(cx, cy, span, height)`, "
+        "`Pillar(cx, cy, height, radius)`. Place via "
+        "`Composition(landmarks=[...])`; auto-snaps to terrain Z.\n"
         "- **Water(cx, cy, radius, depth=0.4)** — round basin centered at "
         "(cx, cy). The basin floor sits `depth` BU below the natural "
         "surface; the surrounding water plane (`LowPolyWaterSurfaceFactory`) "
@@ -1194,19 +1182,11 @@ def _scene_brief_block(map_size: str) -> str:
         "- `overcast` — zen/mournful/foreboding (flat cool, soft shadows)\n"
         "- `dusk` — desert oasis / settling villages (orange/violet)\n"
         "- `night` — lantern-lit/secretive (only when prompt asks)\n\n"
-        "### Atmospheric depth — bounded volume box\n\n"
+        "### Atmospheric depth\n\n"
         "Call `add_aerial_perspective(strength=0.6)` from "
-        "`infinigen.maquette.runtime.composition` AT THE END of the build "
-        "script (after the sun and world background are wired). It spawns "
-        "an invisible 280 BU cube around the scene with Volume Scatter + "
-        "Absorption, giving Cycles golden-hour haze and faint god rays "
-        "without absorbing the sun. Tuning:\n"
-        "- `strength=0.4` — clear day, distant peaks readable\n"
-        "- `strength=0.6` — Sky CotL default (recommended)\n"
-        "- `strength=0.9` — heavy haze (mournful / dawn fog)\n"
-        "Pass `color=(1.0, 0.85, 0.7)` for golden hour, `(0.95, 0.7, 0.8)` "
-        "for dusk, or omit for warm near-white. Bump `box_size=360.0` for "
-        "XL maps so the cube still encloses the camera.\n\n"
+        "`infinigen.maquette.runtime.composition` at the END of the build "
+        "script (after sun + world bg). 0.4 = clear, 0.6 = default, "
+        "0.9 = heavy haze.\n\n"
         "### View transform — use AgX, not Standard\n\n"
         "Set `scene.view_settings.view_transform = 'AgX'` (NOT 'Standard') "
         "and `scene.view_settings.look = 'AgX - Punchy'`. AgX bends warm "
