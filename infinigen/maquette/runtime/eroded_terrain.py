@@ -226,6 +226,7 @@ def _build_heightmap(
     edge_falloff: float,
     edge_floor: float,
     aniso_theta_rad: float | None = None,
+    dunes: bool = False,
 ):
     """Returns (heightmap, alpine_mask). Both are (res, res) float32 NumPy.
 
@@ -346,6 +347,16 @@ def _build_heightmap(
     # smooth. Keep a sliver so the meadow doesn't read as a balloon.
     micro = nz_micro.noise2array(coords / 6.0, coords / 6.0).astype(np.float32)
     h += micro * 0.06
+
+    # Optional: dunes layer (palette_preset='desert' triggers it).
+    # Two crossing sinusoids at 45 / 80 BU wavelengths produce the
+    # rolling-and-crossing dune field characteristic of *Sky CotL*'s
+    # Golden Wasteland — long-period waves, not noise.
+    if dunes:
+        dune_dir = np.array([0.94, 0.34], dtype=np.float32)   # ~20° tilt
+        dune_dir2 = np.array([-0.34, 0.94], dtype=np.float32)
+        h += (1.4 * np.sin(2 * np.pi * (dune_dir[0] * X + dune_dir[1] * Y) / 45.0 + 0.3)).astype(np.float32)
+        h += (0.6 * np.sin(2 * np.pi * (dune_dir2[0] * X + dune_dir2[1] * Y) / 80.0)).astype(np.float32)
 
     # Ridged noise concentrated on alpine peaks.
     ridge = 1.0 - np.abs(nz_ridge.noise2array(coords / 9.0, coords / 9.0).astype(np.float32))
@@ -1332,6 +1343,18 @@ def make_eroded_terrain(
     if bake_for_export is None:
         bake_for_export = _os.environ.get("MAQUETTE_BAKE_FOR_EXPORT", "0") == "1"
 
+    # Soft-deprecate ``peaks=`` for painterly mode — when the build
+    # script doesn't supply a Ridge but does supply peaks, warn the
+    # operator (and any LLM trace reader) that Ridge is the preferred
+    # silhouette primitive. Doesn't disable peaks; just nudges.
+    if peaks and (composition is None
+                   or not getattr(composition, "ridges", None)):
+        print(f"[eroded_terrain] WARNING: {len(peaks)} peak(s) used "
+              f"without a Ridge — peaks=[] is gradually deprecating in "
+              f"favour of Composition(ridges=[Ridge(...)]). Heroes can "
+              f"sit on a sweeping Ridge silhouette for the Sky CotL "
+              f"painterly read.")
+
     # Painterly mode peak handling — when the composition includes any
     # Ridge primitive, the Ridge owns the silhouette. Don't drop peaks
     # entirely (that left scenes pancake-flat); instead cap them HARD
@@ -1386,11 +1409,16 @@ def make_eroded_terrain(
 
     print(f"[eroded_terrain] base heightmap (peaks={len(clamped_peaks)}, "
           f"troughs={len(troughs)})")
+    # Desert palette → enable dunes sinusoid layer in the heightmap.
+    dunes_active = (palette_preset or "").lower() == "desert"
+    if dunes_active:
+        print("[eroded_terrain] dunes layer enabled (palette_preset='desert')")
     H0, alpine = _build_heightmap(
         resolution, float(size), int(seed),
         clamped_peaks, list(troughs), float(plain_offset),
         float(edge_falloff), float(edge_floor),
         aniso_theta_rad=aniso_theta_rad,
+        dunes=dunes_active,
     )
     print(f"[eroded_terrain] eroding ({erode_iters} iter, deposition={deposition:.2f})")
     H = _erode(H0, n_iter=int(erode_iters), deposition=float(deposition))

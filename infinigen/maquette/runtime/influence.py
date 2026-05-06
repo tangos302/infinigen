@@ -51,6 +51,13 @@ class Hero:
     # for subtle elevated plateaus, 4+ BU for visible mesa lifts.
     # Cap ``lift / radius < 0.4`` to avoid Gaussian-splat reading.
     lift: float = 0.0
+    # ``mode``: "flatten" (default — destructive, plateau replaces local
+    # terrain via flatten_radial) or "dome" (additive — Gaussian dome
+    # added on top of existing terrain, no destruction). Use "dome" for
+    # painterly soft heroes that should blend INTO the terrain rather
+    # than carve a flat shelf out of it. ``lift`` becomes the dome
+    # height in dome mode.
+    mode: str = "flatten"
 
 
 @dataclass
@@ -444,15 +451,23 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
     hero_height_sampler = _post_ridge_sample if comp.ridges else base_height_at
 
     for hero in comp.heroes:
-        target_z = hero.target_z
-        if target_z is None:
-            target_z = float(hero_height_sampler(hero.cx, hero.cy))
-        # Apply Hero.lift on top of the natural-height target, so the
-        # plateau sits above its surroundings. Default lift=0 means
-        # pure flatten (smooth the roughness; no elevation change).
-        target_z += float(getattr(hero, "lift", 0.0))
-        H_out = flatten_radial(H_out, X, Y, hero.cx, hero.cy,
-                               hero.radius, target_z, hero.hardness)
+        mode = getattr(hero, "mode", "flatten")
+        if mode == "dome":
+            # Additive Gaussian — adds a dome on top of existing terrain,
+            # no destruction. Reads as a soft hill the building sits on
+            # rather than a carved mesa. ``lift`` is the peak height.
+            d = np.hypot(X - hero.cx, Y - hero.cy) / max(float(hero.radius), 1e-6)
+            dome = np.exp(-(d ** float(hero.hardness))).astype(np.float32)
+            H_out = (H_out + float(getattr(hero, "lift", 1.5)) * dome).astype(np.float32)
+        else:
+            # Default: flatten (destructive). Plateau replaces local
+            # terrain at target_z + lift.
+            target_z = hero.target_z
+            if target_z is None:
+                target_z = float(hero_height_sampler(hero.cx, hero.cy))
+            target_z += float(getattr(hero, "lift", 0.0))
+            H_out = flatten_radial(H_out, X, Y, hero.cx, hero.cy,
+                                   hero.radius, target_z, hero.hardness)
     if comp.paths:
         res = H_out.shape[0]
         # Recover half-extent from grid (X / Y are linspace -size..+size).
