@@ -85,35 +85,20 @@ def place_scene_camera(
     if scene is None:
         return None
 
-    # 1. Pick target (where the camera looks).
-    if composition is not None and getattr(composition, "heroes", None):
-        primary = composition.heroes[0]
-        target_xy = (float(primary.cx), float(primary.cy))
-        # Prefer the actual terrain height under the hero — this avoids
-        # aiming at z=0 when the hero sits on a 12 BU peak.
-        if terrain is not None and hasattr(terrain, "height_at"):
-            try:
-                ground_z = float(terrain.height_at(target_xy[0], target_xy[1]))
-            except Exception:
-                ground_z = 0.0
-        else:
-            ground_z = float(getattr(primary, "target_z", None) or 0.0)
-        # Tower-top offset: hero radius scales the framing target so a
-        # tall structure (radius 15-20) gets aimed at its mid-height,
-        # not its base.
-        head_extra = float(getattr(primary, "lift", 0.0)) + max(
-            float(getattr(primary, "radius", 8.0)) * 0.4, 4.0
-        )
-        target_z = ground_z + head_extra
-    else:
-        target_xy = (0.0, 0.0)
-        target_z = 3.0
+    plan = _plan_framing(
+        composition,
+        terrain_size=terrain_size,
+        terrain=terrain,
+        lens_mm=lens_mm,
+        distance_factor=distance_factor,
+    )
+    target_xy = plan["target_xy"]
+    target_z = plan["target_z"]
+    az_rad = plan["azimuth"]
+    distance = plan["distance"]
+    chosen_lens = plan["lens_mm"]
 
-    # 2. Pick azimuth (compass bearing of the camera relative to target).
-    az_rad = _pick_azimuth(composition, target_xy)
-
-    # 3. Place + aim.
-    distance = distance_factor * float(terrain_size)
+    # Place + aim.
     pitch_rad = math.radians(float(pitch_deg))
     horizontal = distance * math.cos(pitch_rad)
     cam_x = target_xy[0] + horizontal * math.cos(az_rad)
@@ -138,8 +123,116 @@ def place_scene_camera(
     if direction.length > 1e-6:
         cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 
-    cam.data.lens = float(lens_mm)
+    cam.data.lens = float(chosen_lens)
     return cam
+
+
+def _plan_framing(
+    composition: Any,
+    *,
+    terrain_size: float,
+    terrain: Any = None,
+    lens_mm: float = 35.0,
+    distance_factor: float = 1.45,
+) -> dict:
+    """Pure-Python framing planner — returns target_xy, target_z, azimuth,
+    distance, and lens_mm. Pulled out so the math can be unit-tested
+    without Blender, and so panorama / lake branches share one code path.
+
+    Branch selection (in priority order):
+
+      1. **3+ heroes** → panorama: aim at hero centroid, switch to
+         28 mm lens, distance scales with the hero bounding-circle
+         radius so all heroes fit in frame.
+      2. **Hero + large water** → past-water default, but distance is
+         pulled back so the lake's diameter projects to ≤ 65 % of the
+         frame's horizontal extent. Prevents tall watch-and-water
+         scenes from putting the lake off-screen.
+      3. **Hero only / hero+ridge / no-comp** → legacy 35 mm framing.
+    """
+    heroes = []
+    water = None
+    ridges: list = []
+    if composition is not None:
+        heroes = list(getattr(composition, "heroes", None) or [])
+        water = getattr(composition, "water", None)
+        ridges = list(getattr(composition, "ridges", None) or [])
+
+    chosen_lens = float(lens_mm)
+    distance = float(distance_factor) * float(terrain_size)
+
+    # Branch 1 — panorama (3+ heroes).
+    if len(heroes) >= 3:
+        cx = sum(float(h.cx) for h in heroes) / len(heroes)
+        cy = sum(float(h.cy) for h in heroes) / len(heroes)
+        target_xy = (cx, cy)
+        # Bounding-circle radius: max distance from centroid to any hero
+        # center, plus that hero's radius.
+        bound = 0.0
+        for h in heroes:
+            d = math.hypot(float(h.cx) - cx, float(h.cy) - cy)
+            bound = max(bound, d + float(getattr(h, "radius", 8.0)))
+        chosen_lens = 28.0
+        # 28 mm on 36 mm sensor → half-FOV ≈ 32.7° → tan ≈ 0.642.
+        # Need distance such that bound / distance ≤ 0.55 (55 % of half-frame).
+        required = bound / (0.55 * 0.642) if bound > 1e-3 else 0.0
+        distance = max(distance, required)
+    elif heroes:
+        primary = heroes[0]
+        target_xy = (float(primary.cx), float(primary.cy))
+    else:
+        target_xy = (0.0, 0.0)
+
+    # Target Z (height to look at). Same logic as before — sample terrain
+    # under the chosen target, then add tower-top offset based on the
+    # *primary* hero's radius (or a sensible fallback for panorama /
+    # no-hero cases).
+    if heroes:
+        primary = heroes[0]
+        if terrain is not None and hasattr(terrain, "height_at"):
+            try:
+                ground_z = float(terrain.height_at(target_xy[0], target_xy[1]))
+            except Exception:
+                ground_z = 0.0
+        else:
+            ground_z = float(getattr(primary, "target_z", None) or 0.0)
+        head_extra = float(getattr(primary, "lift", 0.0)) + max(
+            float(getattr(primary, "radius", 8.0)) * 0.4, 4.0
+        )
+        target_z = ground_z + head_extra
+    else:
+        target_z = 3.0
+
+    azimuth = _pick_azimuth(composition, target_xy)
+
+    # Branch 2 — lake-aware pullback (single/dual hero + water).
+    # Skip for panorama branch (already lens-tuned for fit).
+    if len(heroes) < 3 and water is not None and heroes:
+        water_radius = float(getattr(water, "radius", 0.0))
+        if water_radius > 8.0:  # only bother pulling back for sizeable lakes
+            # Distance from camera to lake center along the camera ray.
+            # Camera is past the lake along the hero→water direction, so
+            # camera-to-lake distance = camera-to-target distance −
+            # lake-to-target distance.
+            hx, hy = float(heroes[0].cx), float(heroes[0].cy)
+            wx, wy = float(getattr(water, "cx", hx)), float(getattr(water, "cy", hy))
+            lake_to_target = math.hypot(wx - hx, wy - hy)
+            # 35 mm tan(half-FOV) ≈ 0.514. Want lake_radius / cam_to_lake
+            # ≤ 0.5 * 0.514 (so lake projects within ~half the frame).
+            tan_half = 0.514 if abs(chosen_lens - 35.0) < 0.5 else (
+                36.0 / (2.0 * float(chosen_lens))
+            )
+            cam_to_lake_required = water_radius / (0.5 * tan_half) if tan_half > 1e-3 else 0.0
+            required_distance = cam_to_lake_required + lake_to_target
+            distance = max(distance, required_distance)
+
+    return {
+        "target_xy": target_xy,
+        "target_z": target_z,
+        "azimuth": azimuth,
+        "distance": distance,
+        "lens_mm": chosen_lens,
+    }
 
 
 def _pick_azimuth(composition: Any, target_xy: tuple[float, float]) -> float:
