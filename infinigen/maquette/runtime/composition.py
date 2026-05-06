@@ -25,125 +25,138 @@ def add_aerial_perspective(
     *,
     color: tuple[float, float, float] | None = None,
     falloff: float = 0.012,
+    box_size: float = 280.0,
+    box_center: tuple[float, float, float] = (0.0, 0.0, 30.0),
 ) -> None:
-    """Layer a Cycles volumetric scatter on the world output so distant
-    geometry fades to sky color, adding film-quality depth.
+    """Spawn a bounded volume cube around the scene so Cycles renders
+    sun-lit atmospheric haze without absorbing the sun itself.
 
-    This is the "aerial perspective" effect: as light travels through
-    air, it scatters and softens distant silhouettes. Practically this
-    hides far-mountain triangulation seams, blurs the boundary between
-    distant land and sky, and makes the foreground anchor read as
-    closer than the mid-ground hero.
+    Why a *bounded* cube and not a world-output volume? A world volume
+    fills infinite space — sun light (treated as parallel rays from
+    infinity) gets absorbed over thousands of BU before ever reaching
+    the terrain, blacking the scene out. A bounded cube only attenuates
+    rays *inside* its walls, so sun reaches terrain with mild
+    attenuation (~15-25 % at default density) and the volume scatters
+    sun rays into the camera as golden-hour haze + faint god rays.
+
+    The cube has a Transparent BSDF on its surface (invisible from
+    camera, casts no shadow) and Volume Scatter + Volume Absorption on
+    its volume output. Camera must be inside the cube — default size
+    280 BU centered at (0, 0, 30) safely encloses the standard terrain
+    bounds (~120 BU) and a third-person camera (~50-100 BU out).
 
     Parameters
     ----------
     strength : float
-        Density of the volume scatter. 0.3 = subtle haze, 0.6 = clear
-        atmospheric perspective (default), 1.0 = heavy fog. Stay under
-        1.5 unless the prompt explicitly asks for soup.
+        Density multiplier. 0.3 = subtle haze, 0.6 = clear atmospheric
+        perspective (default), 1.0 = heavy fog.
     color : tuple[float, float, float] | None
-        Override the scatter color. Defaults to a slightly cool grey
-        which reads as natural air. For golden-hour scenes, pass a
-        warm peach like ``(1.0, 0.85, 0.7)``; for dusk, a magenta
-        like ``(0.95, 0.7, 0.8)``.
+        Scatter tint. None → warm near-white. Pass ``(1.0, 0.85, 0.7)``
+        for golden hour or ``(0.95, 0.7, 0.8)`` for dusk magenta.
     falloff : float
-        Density falloff per Z unit (height). Higher = haze concentrates
-        near the ground. Default 0.012 keeps haze thickest in the lower
-        ~80 BU of the scene, leaving the sky clear.
+        Reserved (no-op for now); future use is per-height density via
+        Texture Coordinate → ColorRamp on the Density socket.
+    box_size : float
+        Cube edge length in BU. 280 BU comfortably encloses a 120 BU
+        terrain plus camera. Bump to 360+ for XL maps.
+    box_center : tuple[float, float, float]
+        Cube center. Default puts the cube straddling z=-110..170 so
+        terrain valleys and sky are both inside.
 
     Notes
     -----
-    Adds the volume world AT THE END of the build script (after world
-    background nodes are wired). Re-callable: replaces any prior
-    aerial-perspective volume on the world.
-
-    DISABLED — World-output volume scatter is fundamentally incompatible
-    with our Sun-light setup. The world volume fills infinite space,
-    which means sun light (treated as parallel rays from infinity) is
-    absorbed over thousands of BU before ever reaching the terrain.
-    Even at density 0.0005, sun extinction over a 1500 BU path is ~50 %;
-    at density 0.002 the scene goes fully black.
-
-    Proper Sky CotL-style aerial perspective needs a **bounded volume
-    box** (a large invisible cube around the scene with the volume
-    material applied to the cube, so sun rays from outside pass
-    through unattenuated). That's a follow-up; for now this helper is
-    a no-op so build scripts that call it don't blow out the render.
+    Re-callable: replaces any prior `songe_aerial_box` cube.
     """
-    return  # See docstring; bounded-volume implementation is a TODO.
     import bpy
 
     scene = bpy.context.scene
     if scene is None:
         return
-    world = scene.world
-    if world is None:
-        # Build script forgot to author a world — bail rather than
-        # constructing one from nothing (the bg color is opinionated).
-        return
-    world.use_nodes = True
-    nt = world.node_tree
-    nodes = nt.nodes
-    links = nt.links
 
-    # Find existing output + background nodes (build script author
-    # already wired them); we just append the volume nodes to the
-    # output's "Volume" socket without touching surface.
-    out_node = None
-    for n in nodes:
-        if n.bl_idname == "ShaderNodeOutputWorld":
-            out_node = n
-            break
-    if out_node is None:
-        return
+    # Remove any prior aerial-perspective cube so re-calls don't stack.
+    for obj in list(scene.objects):
+        if obj.get("songe_aerial_box") == 1:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    for mat in list(bpy.data.materials):
+        if mat.get("songe_aerial_box") == 1 and mat.users == 0:
+            bpy.data.materials.remove(mat)
 
-    # Replace any prior aerial volume so re-calls don't stack.
-    for n in list(nodes):
-        if n.get("songe_aerial") == 1:
-            nodes.remove(n)
-
-    density = max(0.0, float(strength) * 0.0035)
+    density = max(0.0, float(strength) * 0.0012)
     if density < 1e-6:
-        return  # Volume effectively off — leave the world surface alone.
+        return  # Volume effectively off — skip cube creation entirely.
 
-    # Scatter — what produces the visible "milky" haze.
-    vol_s = nodes.new("ShaderNodeVolumeScatter")
-    vol_s["songe_aerial"] = 1
-    vol_s.location = (out_node.location.x - 360, out_node.location.y - 200)
+    # Spawn cube. `size=N` makes ±N/2 from location.
+    bpy.ops.mesh.primitive_cube_add(size=float(box_size), location=tuple(box_center))
+    cube = bpy.context.active_object
+    cube.name = "AerialPerspectiveBox"
+    cube["songe_aerial_box"] = 1
+
+    # Make the cube invisible to direct rays so it doesn't darken the
+    # scene or block the sun. We still want the volume to render — that
+    # only requires the surface to be transparent (BSDF) plus the cube
+    # being visible to camera so the volume between camera and surfaces
+    # contributes scatter.
+    if hasattr(cube, "visible_shadow"):
+        cube.visible_shadow = False
+    if hasattr(cube, "visible_diffuse"):
+        cube.visible_diffuse = False
+    if hasattr(cube, "visible_glossy"):
+        cube.visible_glossy = False
+    if hasattr(cube, "visible_transmission"):
+        cube.visible_transmission = False
+
+    # Material: Transparent surface + (Scatter + Absorption) volume.
+    mat = bpy.data.materials.new("AerialPerspectiveVol")
+    mat["songe_aerial_box"] = 1
+    mat.use_nodes = True
+    nt = mat.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (320, 0)
+
+    transparent = nt.nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (0, 120)
+
+    vol_s = nt.nodes.new("ShaderNodeVolumeScatter")
+    vol_s.location = (0, -120)
     if color is None:
         color = (0.92, 0.88, 0.84)  # near-white, slightly warm
     vol_s.inputs["Color"].default_value = (color[0], color[1], color[2], 1.0)
     vol_s.inputs["Density"].default_value = density
     if "Anisotropy" in vol_s.inputs:
-        vol_s.inputs["Anisotropy"].default_value = 0.5
+        # Forward-scatter so god rays trail away from the sun rather
+        # than bloom isotropically.
+        vol_s.inputs["Anisotropy"].default_value = 0.6
 
-    # Absorption — counters the scatter's whiteout, tinted warm so
-    # distance reads gold not muddy.
-    vol_a = nodes.new("ShaderNodeVolumeAbsorption")
-    vol_a["songe_aerial"] = 1
-    vol_a.location = (out_node.location.x - 360, out_node.location.y - 320)
+    vol_a = nt.nodes.new("ShaderNodeVolumeAbsorption")
+    vol_a.location = (0, -260)
     vol_a.inputs["Color"].default_value = (0.95, 0.78, 0.65, 1.0)
-    vol_a.inputs["Density"].default_value = density
+    vol_a.inputs["Density"].default_value = density * 0.4
 
-    add = nodes.new("ShaderNodeAddShader")
-    add["songe_aerial"] = 1
-    add.location = (out_node.location.x - 180, out_node.location.y - 240)
-    links.new(vol_s.outputs["Volume"], add.inputs[0])
-    links.new(vol_a.outputs["Volume"], add.inputs[1])
-    links.new(add.outputs["Shader"], out_node.inputs["Volume"])
+    add_v = nt.nodes.new("ShaderNodeAddShader")
+    add_v.location = (160, -180)
+    nt.links.new(vol_s.outputs["Volume"], add_v.inputs[0])
+    nt.links.new(vol_a.outputs["Volume"], add_v.inputs[1])
 
-    # Cycles needs a few sample bumps to render volumes without
-    # massive fireflies. Low limits keep render time sane.
+    nt.links.new(transparent.outputs["BSDF"], out.inputs["Surface"])
+    nt.links.new(add_v.outputs["Shader"], out.inputs["Volume"])
+
+    cube.data.materials.clear()
+    cube.data.materials.append(mat)
+
+    # Cycles volume sampling — keep modest to bound render time.
     cycles = scene.cycles if hasattr(scene, "cycles") else None
     if cycles is not None:
-        if getattr(cycles, "volume_bounces", 0) < 8:
-            cycles.volume_bounces = 8
+        if getattr(cycles, "volume_bounces", 0) < 4:
+            cycles.volume_bounces = 4
         if getattr(cycles, "volume_step_rate", 1.0) > 0.5:
             cycles.volume_step_rate = 0.5
         if getattr(cycles, "volume_max_steps", 1024) < 64:
             cycles.volume_max_steps = 64
 
-    # ``falloff`` reserved for future per-height density via Texture
+    # `falloff` reserved for future per-height density via Texture
     # Coordinate → Math; not implemented yet.
     _ = falloff
 
