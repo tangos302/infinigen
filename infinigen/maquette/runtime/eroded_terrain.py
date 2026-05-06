@@ -932,10 +932,14 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     # generic painterly look.
     palette_name = (palette_preset or "").lower()
     if dunes:
-        # Desert: shadows lean rust-ochre (sandstone), lit leans bright
-        # gold. Keeps the entire surface in the warm-tan emotional band.
-        cool_shadow = np.array([0.85, 0.72, 0.55], dtype=np.float32)
-        warm_lit    = np.array([1.12, 1.04, 0.78], dtype=np.float32)
+        # Desert: VALUE contrast within the warm-tan band. Sky Wasteland
+        # dunes have bright sun-touched crests AND deeper warm-tan
+        # shadow valleys — the hue stays warm, the brightness varies
+        # widely. (Earlier rust-shadow recipe pulled mid-tones to mauve.)
+        # Mild blue lift in shadow (0.72→0.74 in B) avoids the all-warm
+        # flatness without going cool/pink.
+        cool_shadow = np.array([0.72, 0.68, 0.62], dtype=np.float32)
+        warm_lit    = np.array([1.18, 1.10, 0.92], dtype=np.float32)
     elif palette_name == "tropical":
         cool_shadow = np.array([0.72, 0.86, 0.92], dtype=np.float32)  # cool aqua shadow
         warm_lit    = np.array([1.10, 1.04, 0.85], dtype=np.float32)  # bright lemon
