@@ -989,21 +989,24 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     # ~12 % values get tinted toward a darker desaturated rock colour.
     # Reads as "scattered rocky outcrops" without breaking the calm
     # meadow read. Sky CotL has occasional dirt-patch breakup like this.
-    try:
-        from opensimplex import OpenSimplex
-        nz_patch = OpenSimplex(seed=int(seed) + 41)
-        # Per-cell sample; one octave at ~22 BU wavelength.
-        coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 22.0)
-        patch_field = nz_patch.noise2array(coords1d, coords1d).astype(np.float32)
-        # Threshold to bottom ~12 % of cells (organic patches, sparse).
-        patch_mask = np.clip((-patch_field - 0.55) / 0.30, 0, 1)
-        patch_mask = patch_mask * patch_mask  # square for sharper edges
-        rock_patch_rgb = np.array(
-            _palette_linear("stone", palette), dtype=np.float32) * 0.55
-        m = patch_mask[..., None]
-        out = np.clip(out * (1.0 - 0.45 * m) + rock_patch_rgb * 0.45 * m, 0, 1)
-    except Exception:
-        pass
+    # SKIPPED on dunes — sand is uniform; tinting random cells toward
+    # dark stone produces visible darker patches rather than rock,
+    # breaking the unified Sky-Wasteland color story.
+    if not dunes:
+        try:
+            from opensimplex import OpenSimplex
+            nz_patch = OpenSimplex(seed=int(seed) + 41)
+            # Per-cell sample; one octave at ~22 BU wavelength.
+            coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 22.0)
+            patch_field = nz_patch.noise2array(coords1d, coords1d).astype(np.float32)
+            patch_mask = np.clip((-patch_field - 0.55) / 0.30, 0, 1)
+            patch_mask = patch_mask * patch_mask
+            rock_patch_rgb = np.array(
+                _palette_linear("stone", palette), dtype=np.float32) * 0.55
+            m = patch_mask[..., None]
+            out = np.clip(out * (1.0 - 0.45 * m) + rock_patch_rgb * 0.45 * m, 0, 1)
+        except Exception:
+            pass
 
     # 6. Voronoi biome drift — large-scale territorial character. Three
     # independent low-freq HSV fields at ~90 BU wavelength shift each
@@ -1014,23 +1017,31 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     # region painterly variation. Replaces the deferred Voronoi-cell
     # biome-region idea with smooth territorial drift instead of hard
     # cell boundaries.
-    try:
-        from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
-        from opensimplex import OpenSimplex
-        nz_th = OpenSimplex(seed=int(seed) + 51)
-        nz_ts = OpenSimplex(seed=int(seed) + 53)
-        nz_tv = OpenSimplex(seed=int(seed) + 55)
-        coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 90.0)
-        th_field = nz_th.noise2array(coords1d, coords1d).astype(np.float32)
-        ts_field = nz_ts.noise2array(coords1d, coords1d).astype(np.float32)
-        tv_field = nz_tv.noise2array(coords1d, coords1d).astype(np.float32)
-        hsv = rgb_to_hsv(np.clip(out, 0, 1))
-        hsv[..., 0] = np.mod(hsv[..., 0] + th_field * 0.04, 1.0)
-        hsv[..., 1] = np.clip(hsv[..., 1] * (1.0 + ts_field * 0.15), 0, 1)
-        hsv[..., 2] = np.clip(hsv[..., 2] * (1.0 + tv_field * 0.06), 0, 1)
-        out = hsv_to_rgb(hsv).astype(np.float32)
-    except Exception:
-        pass
+    # SKIPPED on dunes — territorial hue/sat drift creates visible color
+    # patches (orange territory, pink territory, etc.) which breaks the
+    # unified Sky-Wasteland color harmony. On sand the only variation
+    # should be from lighting (half-Lambert) and elevation (vertical
+    # gradient), not from territorial color noise. Other biomes keep
+    # the drift — alpine/wetland/savanna actually benefit from
+    # territorial variety.
+    if not dunes:
+        try:
+            from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
+            from opensimplex import OpenSimplex
+            nz_th = OpenSimplex(seed=int(seed) + 51)
+            nz_ts = OpenSimplex(seed=int(seed) + 53)
+            nz_tv = OpenSimplex(seed=int(seed) + 55)
+            coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 90.0)
+            th_field = nz_th.noise2array(coords1d, coords1d).astype(np.float32)
+            ts_field = nz_ts.noise2array(coords1d, coords1d).astype(np.float32)
+            tv_field = nz_tv.noise2array(coords1d, coords1d).astype(np.float32)
+            hsv = rgb_to_hsv(np.clip(out, 0, 1))
+            hsv[..., 0] = np.mod(hsv[..., 0] + th_field * 0.04, 1.0)
+            hsv[..., 1] = np.clip(hsv[..., 1] * (1.0 + ts_field * 0.15), 0, 1)
+            hsv[..., 2] = np.clip(hsv[..., 2] * (1.0 + tv_field * 0.06), 0, 1)
+            out = hsv_to_rgb(hsv).astype(np.float32)
+        except Exception:
+            pass
 
     return out
 
