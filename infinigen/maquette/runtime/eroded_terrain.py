@@ -1483,18 +1483,25 @@ def _place_explicit_water(
     cx_w = float(getattr(water_spec, "cx", 0.0))
     cy_w = float(getattr(water_spec, "cy", 0.0))
     radius_w = float(getattr(water_spec, "radius", 5.0))
+    # Mirror the clamp applied by ``apply_composition`` (min 1.5 BU) so
+    # the water-z offset reflects the *actual* carved basin depth, not
+    # whatever shallow value the LLM picked.
+    depth_w = max(float(getattr(water_spec, "depth", 1.5)), 1.5)
 
     fi = (cx_w + size) / span * res_minus
     fj = (cy_w + size) / span * res_minus
     i = int(np.clip(round(fi), 0, res_minus))
     j = int(np.clip(round(fj), 0, res_minus))
 
-    # Water surface sits just above the basin floor — ~0.6 BU above the
-    # sampled center cell. The carved basin is bowl-shaped (deepest at
-    # center), so this puts the surface above the deepest point and
-    # below most of the basin rim, producing a visible pool.
+    # Water surface sits in the bowl — proportional to basin depth so a
+    # shallow basin doesn't push the water above the rim. A fixed +0.6
+    # offset worked for ≥2 BU basins, but on a 0.65 BU basin the surface
+    # ended up flush with surrounding terrain and the pool read as a
+    # painted disc on flat sand. Lift to ~35 % of basin depth above
+    # the deepest cell, capped at 0.6 BU so deep basins still get a
+    # visible water column above the floor.
     basin_floor_z = float(H[j, i])
-    water_z = basin_floor_z + 0.6
+    water_z = basin_floor_z + min(0.35 * max(depth_w, 0.0), 0.6)
 
     # Footprint mask: cells within radius_w (in world BU) of the water
     # center. Convert world radius to grid cells.

@@ -121,11 +121,13 @@ class Water:
 
     Basin is a smooth bowl centered at ``(cx, cy)`` of ``radius`` BU,
     dipping ``depth`` below the natural surface at the perimeter.
+    Authored depth is clamped to a 1.5 BU minimum at apply time so a
+    too-shallow basin can't render the water flush with terrain.
     """
     cx: float
     cy: float
     radius: float
-    depth: float = 0.4
+    depth: float = 2.0
 
 
 @dataclass
@@ -707,7 +709,13 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
                                  base_height_at=_sample_h)
     if comp.water is not None:
         w = comp.water
-        H_out = basin_radial(H_out, X, Y, w.cx, w.cy, w.radius, w.depth)
+        # Clamp basin depth to a minimum so shallow LLM picks (e.g.
+        # depth=0.4 from the dataclass default, or depth=0.65 picked
+        # for an oasis pool) still carve a visible bowl. Too-shallow
+        # basins push the water surface flush with surrounding terrain
+        # and read as a painted disc instead of a pool.
+        depth = max(float(w.depth), 1.5)
+        H_out = basin_radial(H_out, X, Y, w.cx, w.cy, w.radius, depth)
     return H_out
 
 
