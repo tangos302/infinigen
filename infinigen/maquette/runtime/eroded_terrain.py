@@ -889,6 +889,46 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
         vert_grad = (0.92 + 0.26 * z_norm)[..., None]
         out = np.clip(out * vert_grad, 0, 1)
 
+    # 3b. Half-Lambert directional shading with cool-shadow / warm-lit
+    # tinting. This is the "painted by light" recipe used across
+    # BotW / Sable / Genshin / Sky CotL — surface response to a virtual
+    # sun, mapped through a 2-tone ramp. Cool shadows, warm lit areas.
+    # Pre-baked into vertex color so the look survives any downstream
+    # lighting (browser viewer's flat shading, .blend Cycles, GLB
+    # export). Painted character without depending on real lighting.
+    #
+    # Sun direction: SW-ish at ~50° altitude (matches typical golden-
+    # hour sun placement). Chosen as a default; per-region direction
+    # could be exposed later if needed.
+    sun_dir = np.array([0.50, -0.70, 0.50], dtype=np.float32)
+    sun_dir /= float(np.linalg.norm(sun_dir))
+    # Surface normals from heightmap gradient. gx,gy = ∂z/∂x, ∂z/∂y.
+    # Normal ∝ (-gx, -gy, 1); normalize.
+    cell = float(2.0 * (elev.shape[0] - 1) / max(elev.shape[0] - 1, 1))  # placeholder
+    gy_n, gx_n = np.gradient(elev.astype(np.float32))
+    nz = np.ones_like(elev)
+    nlen = np.sqrt(gx_n * gx_n + gy_n * gy_n + 1.0)
+    nx_n = (-gx_n / nlen).astype(np.float32)
+    ny_n = (-gy_n / nlen).astype(np.float32)
+    nz_n = (nz / nlen).astype(np.float32)
+    lambert = (nx_n * sun_dir[0] + ny_n * sun_dir[1] + nz_n * sun_dir[2])
+    # Half-Lambert: lifts shadows so the dark side never goes black —
+    # signature of stylized terrain shading. (lambert + 1) / 2.
+    half = np.clip((lambert + 1.0) * 0.5, 0.0, 1.0).astype(np.float32)
+    # Smoothstep for painterly transition (linear ramp would look CG).
+    half = (half * half * (3.0 - 2.0 * half)).astype(np.float32)
+    # Two-tone tint: shadow side = cool desaturated, lit side = warm.
+    # Both expressed as RGB multipliers on the existing biome color
+    # so the palette story is preserved — only the value+temperature
+    # shift to match the lighting direction.
+    cool_shadow = np.array([0.68, 0.78, 0.95], dtype=np.float32)  # cool-blue desat
+    warm_lit    = np.array([1.12, 1.04, 0.88], dtype=np.float32)  # warm-amber tint
+    tint = (
+        cool_shadow[None, None, :] * (1.0 - half[..., None])
+        + warm_lit[None, None, :] * half[..., None]
+    )
+    out = np.clip(out * tint, 0, 1)
+
     # 4. Crest highlight strip — second derivative of elev highlights
     # ridge tops; soft positive Gaussian Laplacian → multiply by
     # (1 + 0.10) on those cells. Looks like sun-touched snow rims.
