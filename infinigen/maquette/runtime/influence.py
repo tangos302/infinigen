@@ -141,6 +141,12 @@ class Composition:
     paths: list[Pathway] = field(default_factory=list)
     ridges: list[Ridge] = field(default_factory=list)
     water: Water | None = None
+    # SDF landmark forms (Hoodoo / Arch / Pillar) — full 3D shapes
+    # built via marching cubes and added as separate Blender objects.
+    # Use these for distinctive features the heightmap can't represent
+    # (overhangs, mushroom caps, gateway openings). Imported lazily
+    # since ``runtime.landmarks`` depends on this module.
+    landmarks: list = field(default_factory=list)
 
 
 # ───────────────────────── Math primitives ──────────────────────────

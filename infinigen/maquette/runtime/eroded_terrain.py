@@ -1735,6 +1735,33 @@ def make_eroded_terrain(
         except Exception as exc:
             print(f"[eroded_terrain] bake skipped ({type(exc).__name__}: {exc})")
 
+    # SDF landmarks (Hoodoo / Arch / Pillar) — full 3D shapes built via
+    # marching cubes, added as separate Blender objects. Painterly
+    # material is shared with the terrain so they shade consistently.
+    if (composition is not None and
+            getattr(composition, "landmarks", None)):
+        try:
+            from infinigen.maquette.runtime import landmarks as _landmarks_mod
+
+            def _h_at(x: float, y: float) -> float:
+                # Closure over the local height_at function (defined below
+                # — but reused here via the bilinear sampler structure).
+                res_l = H.shape[0]
+                fi = (x + float(size)) / (2.0 * float(size)) * (res_l - 1)
+                fj = (y + float(size)) / (2.0 * float(size)) * (res_l - 1)
+                i = int(np.clip(round(fi), 0, res_l - 1))
+                j = int(np.clip(round(fj), 0, res_l - 1))
+                return float(H[j, i])
+
+            _landmarks_mod.build_landmark_meshes(
+                composition.landmarks,
+                height_at=_h_at,
+                voxel_size=0.4,
+                material=mat,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[eroded_terrain] landmarks skipped: {exc}")
+
     if water:
         try:
             water_objs = _place_water_volumes(
