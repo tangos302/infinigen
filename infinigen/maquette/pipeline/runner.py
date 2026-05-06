@@ -395,6 +395,30 @@ CRITICAL RULES:
        slightly off-axis (rot_z = math.radians(rng.uniform(-15, 15)))
        and clustered 2-3 deep.
 
+    d) DESERT FLORA DISCIPLINE — cacti and palm trees are tall thin
+       silhouettes. Random-uniform scatter across a panorama produces
+       noise spikes (each saguaro reads as a 3-prong vertical at
+       distance), not a designed desert. Rules for `palette_preset='desert'`:
+
+         * `LowPolyCactusFactory` — TOTAL count ≤ 12 across the whole
+           map. Place in 2-4 deliberate clusters of 3-5 cacti each, NOT
+           random uniform sampling. Each cluster sits at a designed
+           location (path bend, ruin edge, beside a hero). Scale floor
+           0.85 (was 0.60) so they read as hero plants, not pepper:
+           `cactus.scale = (rng.uniform(0.85, 1.15),) * 3`.
+         * `LowPolyPalmTreeFactory` — oasis-only. A ring around the
+           water (8-12 trees) is the canonical pattern; do NOT scatter
+           palms across dunes.
+         * `LowPolyTumbleweedFactory` — 4-8 max, ground-level
+           horizontal silhouettes that fill empty foreground without
+           adding vertical noise.
+         * Boulders + scrub bushes carry the spread instead — they
+           read as ground texture, not vertical pickets.
+
+       Test: from camera position, count discrete vertical silhouettes
+       on the dune surface. >15 vertical sticks across the frame =
+       too noisy; redistribute into clusters or drop count.
+
 13. SKY / WORLD BACKGROUND COLOUR — picking the right preset.
 
     The Background node's color is the WHOLE sky for distant pixels.
