@@ -225,6 +225,7 @@ def _build_heightmap(
     plain_offset: float,
     edge_falloff: float,
     edge_floor: float,
+    aniso_theta_rad: float | None = None,
 ):
     """Returns (heightmap, alpine_mask). Both are (res, res) float32 NumPy.
 
@@ -296,32 +297,42 @@ def _build_heightmap(
     #
     # Reduced from 4 octaves to 2 (1.0 + 0.40); the upper octaves were
     # producing the noisy "function on a grid" read.
-    theta = float(seed % 360) * (np.pi / 180.0)
+    # Aniso theta: when caller passes a ridge-derived angle, align the
+    # noise stretch with the ridge axis so terrain features run WITH
+    # the ridge, not cross-grain. Falls back to a seed-derived angle
+    # when no ridge is present.
+    if aniso_theta_rad is not None:
+        theta = float(aniso_theta_rad)
+    else:
+        theta = float(seed % 360) * (np.pi / 180.0)
     cos_t, sin_t = np.cos(theta), np.sin(theta)
-    along_stretch = 0.62  # 1.6× longer wavelength along ridge axis (was 0.45 = 2.2× — produced visible corrugated stripes)
+    along_stretch = 0.62  # 1.6× longer wavelength along ridge axis
 
     fbm = np.zeros((res, res), dtype=np.float32)
     Xw_world = X.astype(np.float32) + warp_x
     Yw_world = Y.astype(np.float32) + warp_y
-    # Rotate world coords into ridge-aligned frame, stretch the along-axis.
+    # Aniso coords (broad octave only): rotate into ridge-aligned frame,
+    # stretch the along-axis. Higher-frequency octaves use isotropic
+    # world-XY so fine detail stays uncombed.
     along = (cos_t * Xw_world + sin_t * Yw_world) * along_stretch
     cross = -sin_t * Xw_world + cos_t * Yw_world
     # Multi-scale octaves — broad / medium / small features mixed so
     # the terrain has identifiable scale variation (not "every swell
     # the same size"). Wavelengths roughly 60 / 28 / 13 BU on the
     # 160 BU plane — the broad octave defines the rolling silhouette,
-    # medium adds character, small adds painterly grain. Total noise
-    # amplitude ~1.9 (was 1.4 on 2 octaves), post-mul keeps shape
-    # within ~3 BU of mean.
-    for amp, freq in [(0.90, 0.45), (0.70, 1.0), (0.30, 2.1)]:
+    # medium adds character, small adds painterly grain.
+    for octave_i, (amp, freq) in enumerate([(0.90, 0.45), (0.70, 1.0), (0.30, 2.1)]):
         cx_axis = coords * freq / 28.0
         layer = nz_fbm.noise2array(cx_axis, cx_axis).astype(np.float32)
-        # Map (along, cross) world coords to pixel coords on the layer.
-        # `layer` is sampled on coords ∈ [-size, +size]; the stretched
-        # along-axis covers ~2.2× more world distance per pixel, so
-        # features appear elongated along the ridge.
-        ax_pix = (along + size) / span * (res - 1)
-        ay_pix = (cross + size) / span * (res - 1)
+        # Per-octave anisotropy: only the BROAD octave (i=0) stretches
+        # along the ridge axis. Medium and high octaves stay isotropic
+        # — stretching all of them was producing the "combed" surface.
+        if octave_i == 0:
+            ax_pix = (along + size) / span * (res - 1)
+            ay_pix = (cross + size) / span * (res - 1)
+        else:
+            ax_pix = (Xw_world + size) / span * (res - 1)
+            ay_pix = (Yw_world + size) / span * (res - 1)
         warped = map_coordinates(
             layer, [ay_pix, ax_pix], order=1, mode="reflect"
         ).astype(np.float32)
@@ -1356,12 +1367,30 @@ def make_eroded_terrain(
         if n_clamped:
             print(f"[eroded_terrain] clamped {n_clamped}/{len(peaks)} peaks "
                   f"to max_peak_height={cap:.1f}")
+    # Derive aniso theta from the first ridge's overall direction so
+    # the broad-octave noise stretches WITH the ridge, not against it.
+    # Falls back to seed-derived angle when no ridge is present.
+    aniso_theta_rad: float | None = None
+    if (composition is not None and getattr(composition, "ridges", None)
+            and len(composition.ridges) > 0):
+        first = composition.ridges[0]
+        wp = list(first.waypoints)
+        if len(wp) >= 2:
+            dx = float(wp[-1][0]) - float(wp[0][0])
+            dy = float(wp[-1][1]) - float(wp[0][1])
+            if (dx * dx + dy * dy) > 1e-3:
+                import math as _math
+                aniso_theta_rad = _math.atan2(dy, dx)
+                print(f"[eroded_terrain] aniso aligned to ridge axis "
+                      f"({_math.degrees(aniso_theta_rad):.0f}°)")
+
     print(f"[eroded_terrain] base heightmap (peaks={len(clamped_peaks)}, "
           f"troughs={len(troughs)})")
     H0, alpine = _build_heightmap(
         resolution, float(size), int(seed),
         clamped_peaks, list(troughs), float(plain_offset),
         float(edge_falloff), float(edge_floor),
+        aniso_theta_rad=aniso_theta_rad,
     )
     print(f"[eroded_terrain] eroding ({erode_iters} iter, deposition={deposition:.2f})")
     H = _erode(H0, n_iter=int(erode_iters), deposition=float(deposition))
