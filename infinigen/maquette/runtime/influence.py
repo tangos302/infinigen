@@ -129,6 +129,62 @@ class Water:
 
 
 @dataclass
+class Cliff:
+    """A directional cliff face — drops the terrain by ``height`` BU
+    on one side of the line from ``start`` to ``end``.
+
+    This is the primitive an art director uses to say "the eastern
+    edge of this plateau drops 12 BU into the basin" — a deliberate
+    cliff with a chosen orientation, not a procedural artifact.
+
+    ``facing`` is the side of the line that drops:
+      * ``"right"`` (default): walking start → end, the right side is low.
+      * ``"left"``: walking start → end, the left side is low.
+
+    ``blend`` is the horizontal smoothstep distance (in BU) over which
+    the drop happens. Smaller = sharper cliff edge, larger = ramp.
+
+    ``hard_top`` clips the high side to a constant elevation rather
+    than letting it follow whatever was there — useful when the cliff
+    bounds a flat plateau and you want a clean break, not a slumped
+    edge. Pass ``None`` to keep the existing terrain on the high side.
+    """
+    start: tuple[float, float]
+    end: tuple[float, float]
+    height: float = 8.0
+    blend: float = 3.0
+    facing: str = "right"   # "left" | "right"
+    hard_top: float | None = None
+
+
+@dataclass
+class Mesa:
+    """A flat-topped landmark with a polygonal footprint.
+
+    Where ``Hero`` is a Gaussian dome (radial), ``Mesa`` is a polygon
+    — the art director draws the silhouette of the top deck. Inside
+    the polygon, terrain flattens to ``target_z``; over a band of
+    ``blend`` BU outside the polygon edge, terrain smoothsteps from
+    the flat top to whatever was there.
+
+    ``polygon`` is a closed-loop list of (x, y) points. Order doesn't
+    matter (CCW or CW both work — we test inside-ness by signed-distance).
+    Minimum 3 vertices.
+
+    ``target_z`` of ``None`` samples the natural terrain height at
+    the polygon centroid, then adds ``lift``.
+
+    ``lift`` raises the mesa above local terrain. 6-12 BU produces a
+    visible plateau; 0 produces a "shelf" carved into existing relief.
+    Cap ``lift / shortest-edge < 0.4`` to avoid splat-pancake reading.
+    """
+    polygon: list[tuple[float, float]]
+    target_z: float | None = None
+    lift: float = 0.0
+    blend: float = 3.0
+
+
+@dataclass
 class Composition:
     """Bundle of constraints applied to a heightfield before meshing.
 
@@ -140,6 +196,8 @@ class Composition:
     heroes: list[Hero] = field(default_factory=list)
     paths: list[Pathway] = field(default_factory=list)
     ridges: list[Ridge] = field(default_factory=list)
+    cliffs: list = field(default_factory=list)
+    mesas: list = field(default_factory=list)
     water: Water | None = None
     # SDF landmark forms (Hoodoo / Arch / Pillar) — full 3D shapes
     # built via marching cubes and added as separate Blender objects.
@@ -414,6 +472,122 @@ def clamp_above(H: np.ndarray, mask: np.ndarray, min_z: float) -> np.ndarray:
     return np.where(mask > 0, np.maximum(H, float(min_z)), H).astype(np.float32)
 
 
+def cliff_along(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
+                start: tuple[float, float],
+                end: tuple[float, float],
+                *,
+                height: float = 8.0,
+                blend: float = 3.0,
+                facing: str = "right",
+                hard_top: float | None = None) -> np.ndarray:
+    """Drop the terrain by ``height`` BU on one side of the line
+    ``start → end``, with a smoothstep transition of ``blend`` BU width.
+
+    The cliff is a discontinuity the art director draws — useful for
+    coastal cliffs, plateau edges, fortress drops. Unlike radial
+    operators (Hero, basin), it has a *direction*.
+
+    Math:
+      * Compute signed perpendicular distance from each cell to the
+        infinite line through start→end (positive on one side, negative
+        on the other, by the line's normal).
+      * The "low" side is selected by ``facing``: right (default) =
+        the side reached by rotating the start→end direction 90° CW.
+      * Within ``blend`` BU of the line on the low side, smoothstep
+        from full elevation to (elevation - height).
+    """
+    sx, sy = float(start[0]), float(start[1])
+    ex, ey = float(end[0]), float(end[1])
+    dx, dy = ex - sx, ey - sy
+    L = (dx * dx + dy * dy) ** 0.5
+    if L < 1e-6:
+        return H
+    # Unit tangent along start→end and CCW normal.
+    tx, ty = dx / L, dy / L
+    # CCW normal: rotate tangent 90° CCW = (-ty, tx).
+    nx_ccw, ny_ccw = -ty, tx
+    # Signed perpendicular distance: positive on the CCW (left) side
+    # when you walk start → end.
+    sd = (X - sx) * nx_ccw + (Y - sy) * ny_ccw
+    if str(facing).lower() == "right":
+        sd = -sd  # flip so positive is the LOW side
+    # Influence is 1 on the low side at sd >= 0, ramping smoothly to 0
+    # at sd = -blend (the high side, just past the cliff line).
+    t = np.clip((sd + float(blend)) / max(float(blend), 1e-6), 0.0, 1.0)
+    w = (t * t * (3.0 - 2.0 * t)).astype(np.float32)
+    H_low = (H - float(height)).astype(np.float32)
+    H_out = H * (1.0 - w) + H_low * w
+    if hard_top is not None:
+        # On the high side (sd < -blend, i.e. w == 0), clip to hard_top.
+        high_side = (w < 0.01).astype(np.float32)
+        H_out = H_out * (1.0 - high_side) + np.minimum(
+            H_out, float(hard_top)
+        ) * high_side
+    return H_out.astype(np.float32)
+
+
+def _polygon_signed_distance(X: np.ndarray, Y: np.ndarray,
+                              polygon: Sequence[tuple[float, float]]) -> np.ndarray:
+    """Signed distance from each (X, Y) cell to a closed polygon.
+
+    Negative inside, positive outside. Pure NumPy, vectorized over the
+    grid. Polygon is a list of (x, y) points; closure is implicit (last
+    vertex connects back to first).
+    """
+    pts = np.asarray(list(polygon), dtype=np.float32)
+    n = len(pts)
+    if n < 3:
+        return np.full(X.shape, 1e6, dtype=np.float32)
+
+    # Distance to closest edge.
+    min_d2 = np.full(X.shape, np.inf, dtype=np.float32)
+    for i in range(n):
+        ax, ay = float(pts[i, 0]), float(pts[i, 1])
+        bx, by = float(pts[(i + 1) % n, 0]), float(pts[(i + 1) % n, 1])
+        ex, ey = bx - ax, by - ay
+        ll = ex * ex + ey * ey + 1e-12
+        t = np.clip(((X - ax) * ex + (Y - ay) * ey) / ll, 0.0, 1.0)
+        cx = ax + t * ex
+        cy = ay + t * ey
+        d2 = (X - cx) ** 2 + (Y - cy) ** 2
+        min_d2 = np.minimum(min_d2, d2)
+    dist = np.sqrt(min_d2)
+
+    # Inside-test via crossing number (ray to +X).
+    inside = np.zeros(X.shape, dtype=bool)
+    for i in range(n):
+        ax, ay = float(pts[i, 0]), float(pts[i, 1])
+        bx, by = float(pts[(i + 1) % n, 0]), float(pts[(i + 1) % n, 1])
+        # Edge straddles the horizontal line through (X, Y)?
+        cond = ((ay > Y) != (by > Y))
+        slope = (bx - ax) / ((by - ay) + 1e-12)
+        x_intersect = ax + slope * (Y - ay)
+        cross = cond & (X < x_intersect)
+        inside ^= cross
+    sd = np.where(inside, -dist, dist).astype(np.float32)
+    return sd
+
+
+def mesa_polygon(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
+                 polygon: Sequence[tuple[float, float]],
+                 target_z: float,
+                 *,
+                 blend: float = 3.0) -> np.ndarray:
+    """Flatten the area inside ``polygon`` to ``target_z`` with a
+    ``blend`` BU smoothstep band outside the perimeter.
+
+    Where ``Hero`` is a Gaussian dome (radial), this is a polygon —
+    the art director draws the silhouette of the top deck. Inside the
+    polygon, every cell snaps to ``target_z``. From the perimeter
+    outward over ``blend`` BU, the influence smoothsteps from 1 to 0.
+    """
+    sd = _polygon_signed_distance(X, Y, polygon)
+    # Inside: sd <= 0, weight = 1. Outside band: smoothstep 1 → 0 over blend.
+    w = 1.0 - np.clip(sd / max(float(blend), 1e-6), 0.0, 1.0)
+    w = (w * w * (3.0 - 2.0 * w)).astype(np.float32)
+    return (H * (1.0 - w) + float(target_z) * w).astype(np.float32)
+
+
 # ───────────────────────── Composition driver ──────────────────────────
 
 def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
@@ -474,6 +648,29 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
             target_z += float(getattr(hero, "lift", 0.0))
             H_out = flatten_radial(H_out, X, Y, hero.cx, hero.cy,
                                    hero.radius, target_z, hero.hardness)
+    # Mesas — polygonal flat-topped landmarks. Applied after heroes so
+    # a mesa edge can sit on top of a dome without the dome washing it
+    # back, but before paths so paths thread across the deck rather
+    # than around the mesa's footprint.
+    for mesa in getattr(comp, "mesas", []) or []:
+        target_z = mesa.target_z
+        if target_z is None:
+            # Sample at polygon centroid.
+            pts = np.asarray(mesa.polygon, dtype=np.float32)
+            cz = float(np.mean(pts[:, 0])), float(np.mean(pts[:, 1]))
+            target_z = float(hero_height_sampler(cz[0], cz[1]))
+        target_z += float(getattr(mesa, "lift", 0.0))
+        H_out = mesa_polygon(H_out, X, Y, mesa.polygon, target_z,
+                             blend=mesa.blend)
+
+    # Cliffs — directional drops. Applied after mesas so a cliff can
+    # bound a mesa's edge.
+    for cliff in getattr(comp, "cliffs", []) or []:
+        H_out = cliff_along(H_out, X, Y, cliff.start, cliff.end,
+                            height=cliff.height, blend=cliff.blend,
+                            facing=cliff.facing,
+                            hard_top=cliff.hard_top)
+
     if comp.paths:
         res = H_out.shape[0]
         # Recover half-extent from grid (X / Y are linspace -size..+size).
