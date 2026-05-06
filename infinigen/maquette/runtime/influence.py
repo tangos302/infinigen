@@ -100,7 +100,10 @@ class Ridge:
     2.5 = sharp ridge.
     """
     waypoints: Sequence[tuple[float, float]]
-    height: float = 8.0
+    # Ridge height was 8 BU (1/40 of a 320 BU world span) — barely
+    # visible as a bump. Bumped to 16 BU so the ridge reads as a
+    # genuine silhouette feature without going Skyrim-vertical.
+    height: float = 16.0
     width: float = 25.0
     hardness: float = 1.4
 

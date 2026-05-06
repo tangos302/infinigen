@@ -319,7 +319,10 @@ def _build_heightmap(
             layer, [ay_pix, ax_pix], order=1, mode="reflect"
         ).astype(np.float32)
         fbm += amp * warped
-    h += fbm * 1.0
+    # FBM amplitude bumped 1.0 → 1.6 to compensate for the dropped
+    # 3rd+4th octaves. Sky terrain is gentle ocean-swell undulation;
+    # ours was reading as pancake-flat without this lift.
+    h += fbm * 1.6
 
     # Micro detail — heavily reduced (was 0.25 amplitude). Painterly
     # mode wants near-zero ground noise; Sky's foreground is glassy
@@ -965,13 +968,19 @@ def _decimate_terrain(obj, target_verts: int) -> None:
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
 
+        # Save a snapshot of the original mesh data via bmesh, in case
+        # DISSOLVE over-collapses (Sky-flat terrain has very few non-
+        # coplanar regions; the angle-limited dissolve would crush
+        # everything to <5k verts and the meadow would read as a low-
+        # poly plane). We restore from snapshot and use COLLAPSE on the
+        # original if DISSOLVE drops below the floor.
+        import bmesh as _bmesh
+        snapshot_bm = _bmesh.new()
+        snapshot_bm.from_mesh(me)
+
         # Try DISSOLVE (planar / angle-limited) first — preserves
         # silhouette ridges by collapsing co-planar faces only. Blender's
-        # Decimate enum spells this ``DISSOLVE``; the docs/UI label it
-        # "Planar". Angle limit was 5° which dissolved nearly everything
-        # on Sky-flat (post-peak-suppression) terrain — dropped to 1.5°
-        # so only NEAR-coplanar faces (broad meadow) get merged, ridge
-        # detail survives.
+        # Decimate enum spells this ``DISSOLVE``; UI labels it "Planar".
         mod_name = "TerrainLOD"
         mod = obj.modifiers.new(mod_name, "DECIMATE")
         mod.decimate_type = "DISSOLVE"
@@ -984,21 +993,46 @@ def _decimate_terrain(obj, target_verts: int) -> None:
             if mod_name in obj.modifiers:
                 obj.modifiers.remove(obj.modifiers[mod_name])
 
-        # If PLANAR didn't get us close enough, follow up with COLLAPSE
-        # at the remaining ratio. PLANAR alone often overshoots / undershoots
-        # because its trigger is angle-based, not vert-count based.
+        # Vert floor — if DISSOLVE over-collapsed (mostly-flat terrain),
+        # restore from snapshot and use COLLAPSE to ratio-target instead.
+        # Floor of 12k preserves enough detail for smooth shading on a
+        # 160 BU plane without giving up too much LOD savings.
         n_after_planar = len(me.vertices)
-        if n_after_planar > int(target_verts) * 1.3:
-            ratio = max(0.02, min(1.0, float(target_verts) / float(n_after_planar)))
-            mod2 = obj.modifiers.new("TerrainLOD2", "DECIMATE")
-            mod2.decimate_type = "COLLAPSE"
-            mod2.ratio = ratio
+        floor = max(int(target_verts) // 3, 12000)
+        if n_after_planar < floor:
+            print(f"[eroded_terrain] DISSOLVE under-shot ({n_after_planar} < "
+                  f"{floor}); restoring snapshot + COLLAPSE")
+            # Wipe current mesh + restore from snapshot.
+            me.clear_geometry()
+            snapshot_bm.to_mesh(me)
+            me.update()
+            n_restored = len(me.vertices)
+            ratio = max(0.02, min(1.0, float(target_verts) / float(n_restored)))
+            mod_r = obj.modifiers.new("TerrainLOD_R", "DECIMATE")
+            mod_r.decimate_type = "COLLAPSE"
+            mod_r.ratio = ratio
             try:
-                bpy.ops.object.modifier_apply(modifier="TerrainLOD2")
+                bpy.ops.object.modifier_apply(modifier="TerrainLOD_R")
             except RuntimeError as exc:
-                print(f"[eroded_terrain] COLLAPSE follow-up failed ({exc})")
-                if "TerrainLOD2" in obj.modifiers:
-                    obj.modifiers.remove(obj.modifiers["TerrainLOD2"])
+                print(f"[eroded_terrain] COLLAPSE restore failed ({exc})")
+                if "TerrainLOD_R" in obj.modifiers:
+                    obj.modifiers.remove(obj.modifiers["TerrainLOD_R"])
+        else:
+            # Optional COLLAPSE follow-up if DISSOLVE OVER-shot — only
+            # triggers when vert count is way above target (>1.3×), e.g.
+            # rugged terrain with lots of non-coplanar faces.
+            if n_after_planar > int(target_verts) * 1.3:
+                ratio = max(0.02, min(1.0, float(target_verts) / float(n_after_planar)))
+                mod2 = obj.modifiers.new("TerrainLOD2", "DECIMATE")
+                mod2.decimate_type = "COLLAPSE"
+                mod2.ratio = ratio
+                try:
+                    bpy.ops.object.modifier_apply(modifier="TerrainLOD2")
+                except RuntimeError as exc:
+                    print(f"[eroded_terrain] COLLAPSE follow-up failed ({exc})")
+                    if "TerrainLOD2" in obj.modifiers:
+                        obj.modifiers.remove(obj.modifiers["TerrainLOD2"])
+        snapshot_bm.free()
     finally:
         bpy.ops.object.select_all(action="DESELECT")
         for o in prev_selected:
@@ -1260,16 +1294,20 @@ def make_eroded_terrain(
     if bake_for_export is None:
         bake_for_export = _os.environ.get("MAQUETTE_BAKE_FOR_EXPORT", "0") == "1"
 
-    # Painterly mode peak-suppression — when the composition includes
-    # any Ridge primitive, drop the legacy ``peaks=`` Gaussian splats.
-    # The Ridge owns the silhouette; piling Gaussians on top of it
-    # produces the "stack of bumps" reading the user kept calling out.
-    # Empty-ridges scenes still respect peaks so explicit isolated-
-    # peak prompts (volcano, lone monolith) still work.
+    # Painterly mode peak handling — when the composition includes any
+    # Ridge primitive, the Ridge owns the silhouette. Don't drop peaks
+    # entirely (that left scenes pancake-flat); instead cap them HARD
+    # to 4-8 BU so they read as gentle hill variation around the ridge,
+    # not competing splats. Empty-ridges scenes still respect peaks at
+    # full height for explicit isolated-peak prompts.
     if composition is not None and getattr(composition, "ridges", None) and peaks:
-        print(f"[eroded_terrain] painterly mode: suppressing {len(peaks)} "
-              f"peaks in favour of {len(composition.ridges)} ridge(s)")
-        peaks = ()
+        peaks_capped = []
+        for cx, cy, sigma, h_p in peaks:
+            new_h = min(float(h_p), 6.0)  # tight cap when ridges present
+            peaks_capped.append((cx, cy, sigma, new_h))
+        print(f"[eroded_terrain] painterly mode: clamping {len(peaks)} "
+              f"peaks to ≤6 BU (Ridge owns silhouette)")
+        peaks = peaks_capped
 
     # Clamp incoming peak heights — Sky CotL terrain reads as serene/
     # horizontal, not Skyrim/vertical. The LLM brief asks for 8-12 BU

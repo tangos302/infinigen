@@ -978,7 +978,7 @@ def _scene_brief_block(map_size: str) -> str:
         "        # silhouette. Drives the heroes onto a natural backbone.\n"
         "        ridges=[\n"
         "            Ridge(waypoints=[(-50, -10), (-15, 8), (20, 18), (50, 22)],\n"
-        "                  height=10.0, width=28.0, hardness=1.3),\n"
+        "                  height=16.0, width=28.0, hardness=1.3),\n"
         "        ],\n"
         "        heroes=[\n"
         "            Hero(cx=P_X,  cy=P_Y,  radius=18, hardness=1.2),  # broad soft plateau\n"
