@@ -479,6 +479,27 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
         # Recover half-extent from grid (X / Y are linspace -size..+size).
         half_extent = float((np.max(X) - np.min(X)) * 0.5)
 
+        # A* refine waypoints against the post-ridge / post-hero terrain
+        # so a path crossing a cliff face gets re-routed around it.
+        # Mutates ``path.waypoints`` in place so downstream consumers
+        # (apply_path_tint, etc.) see the refined polyline. Best-effort:
+        # any error keeps the original waypoints intact.
+        try:
+            from infinigen.maquette.runtime.path_refine import refine_waypoints
+            for path in comp.paths:
+                if len(path.waypoints) < 2:
+                    continue
+                refined = refine_waypoints(
+                    path.waypoints,
+                    H_out,
+                    size=half_extent,
+                    max_slope_deg=22.0,
+                )
+                if len(refined) >= 2:
+                    path.waypoints = refined
+        except Exception:
+            pass
+
         def _sample_h(x: float, y: float) -> float:
             fi = (x + half_extent) / (2.0 * half_extent) * (res - 1)
             fj = (y + half_extent) / (2.0 * half_extent) * (res - 1)
