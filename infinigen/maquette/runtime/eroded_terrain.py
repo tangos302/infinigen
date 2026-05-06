@@ -684,7 +684,7 @@ def _quantile_thresholds(elev, sea_level: float):
     }
 
 
-def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, PaletteRGB]):
+def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, PaletteRGB], *, dunes: bool = False):
     """Continuous biome blend. Returns (res, res, 3) **linear-RGB**.
 
     Thresholds follow elevation quantiles (see ``_quantile_thresholds``)
@@ -701,6 +701,23 @@ def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, Palett
     res = elev.shape[0]
     out = np.empty((res, res, 3), dtype=np.float32)
     out[:] = _arr("meadow")
+
+    # Desert short-circuit: dunes are sand top to bottom. No biome bands,
+    # no slope-gated stone outcrops, no snow caps. Rocks come from
+    # boulder factories, not from vertex-color bands on the heightmap.
+    # Submerged cells (oasis basins) still get the lakebed/shore blend
+    # so water reads correctly.
+    if dunes:
+        sand = _arr("shore")
+        out[:] = sand
+        above = elev - sea_level
+        submerged = (above < 0).astype(np.float32)
+        depth = np.clip(-above / 1.5, 0, 1)
+        near = (1 - depth)[..., None]
+        deep = depth[..., None]
+        underwater = _arr("shore") * near + _arr("lakebed") * deep
+        out = out * (1 - submerged[..., None]) + underwater * submerged[..., None]
+        return np.clip(out, 0, 1)
 
     above = elev - sea_level
     q = _quantile_thresholds(elev, sea_level)
@@ -768,7 +785,7 @@ def _biome_colors(elev, alpine_mask, sea_level: float, palette: dict[str, Palett
     return np.clip(out, 0, 1)
 
 
-def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
+def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = False):
     """Lift the flat biome-band colour into a stylised low-poly read.
 
     Two multiplicative-style passes, both pure numpy on the (res, res, 3)
@@ -792,37 +809,37 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
     import numpy as np
 
     out = np.array(col, dtype=np.float32, copy=True)
-
-    # 1. Slope tint — gentle two-tone. Cliffs lerp toward a blend of
-    # *warm ochre* and *cool grey* rock; a low-freq field decides which
-    # tone wins for each part of the scene. Sky CotL cliffs read as
-    # multi-coloured stone (sandstone amber, basalt grey) rather than
-    # uniform dark slabs. Painterly mode amplitude is half the chunky-
-    # poly pipeline since toon shading would otherwise over-emphasise.
-    gy, gx = np.gradient(elev)
-    slope = np.sqrt(gx * gx + gy * gy)
-    s = np.clip((slope - 0.30) / 0.50, 0, 1)
-    s = s * s * (3.0 - 2.0 * s)
     res = elev.shape[0]
-    cool_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.50
-    warm_rgb = np.array((0.42, 0.30, 0.18), dtype=np.float32)  # sandstone ochre
-    try:
-        from opensimplex import OpenSimplex
-        nz_rock = OpenSimplex(seed=int(seed) + 61)
-        # ~50 BU wavelength so each cliff face reads a single tone.
-        coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 50.0)
-        rock_field = nz_rock.noise2array(coords1d, coords1d).astype(np.float32)
-        warm_mix = np.clip(rock_field * 0.5 + 0.5, 0, 1)  # [0, 1] cell weight
-        # Smoothstep for soft territorial boundaries.
-        warm_mix = warm_mix * warm_mix * (3.0 - 2.0 * warm_mix)
-        rock_rgb = (
-            cool_rgb[None, None, :] * (1 - warm_mix[..., None])
-            + warm_rgb[None, None, :] * warm_mix[..., None]
-        )
-        out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
-    except Exception:
-        # OpenSimplex unavailable — fall back to single-tone cool.
-        out = out * (1 - s[..., None]) + cool_rgb * s[..., None]
+
+    # 1. Slope tint — cliffs lerp toward a blend of warm ochre and cool
+    # grey rock based on a low-freq territorial field. Sky CotL cliffs
+    # read as multi-coloured stone (sandstone amber, basalt grey).
+    # SKIPPED on dunes (desert): the entire surface is sand, no rock
+    # faces; tinting steep dune slopes toward stone produces dark
+    # bumps that read as terrain pyramids — exactly the artifact the
+    # user reported. Vertical brightness gradient (step 3) handles
+    # dune shading without invoking rock colours.
+    if not dunes:
+        gy, gx = np.gradient(elev)
+        slope = np.sqrt(gx * gx + gy * gy)
+        s = np.clip((slope - 0.30) / 0.50, 0, 1)
+        s = s * s * (3.0 - 2.0 * s)
+        cool_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.50
+        warm_rgb = np.array((0.42, 0.30, 0.18), dtype=np.float32)  # sandstone ochre
+        try:
+            from opensimplex import OpenSimplex
+            nz_rock = OpenSimplex(seed=int(seed) + 61)
+            coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 50.0)
+            rock_field = nz_rock.noise2array(coords1d, coords1d).astype(np.float32)
+            warm_mix = np.clip(rock_field * 0.5 + 0.5, 0, 1)
+            warm_mix = warm_mix * warm_mix * (3.0 - 2.0 * warm_mix)
+            rock_rgb = (
+                cool_rgb[None, None, :] * (1 - warm_mix[..., None])
+                + warm_rgb[None, None, :] * warm_mix[..., None]
+            )
+            out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
+        except Exception:
+            out = out * (1 - s[..., None]) + cool_rgb * s[..., None]
 
     # 2. Smooth low-frequency macro variation — broad pasture tones, not
     # high-contrast splotches. ±5 % brightness off a smooth FBM (no
@@ -1645,13 +1662,13 @@ def make_eroded_terrain(
               f"(heroes={len(composition.heroes)}, paths={len(composition.paths)}, "
               f"water={'yes' if composition.water else 'no'})")
     print(f"[eroded_terrain] elevation range {H.min():.2f}..{H.max():.2f}")
-    COL = _biome_colors(H, alpine, float(sea_level), palette)
+    COL = _biome_colors(H, alpine, float(sea_level), palette, dunes=dunes_active)
     # Stylised passes — slope tint + quantised palette jitter. Lifts
     # the flat biome bands into a stylised low-poly read. Skip when
     # realistic textures are on, since the PBR shader does its own
     # painting from these colours and a slope-darken would double up.
     if not realistic_textures:
-        COL = _apply_stylised_passes(H, COL, palette, seed=int(seed))
+        COL = _apply_stylised_passes(H, COL, palette, seed=int(seed), dunes=dunes_active)
         # Watercolour-paper screen-blend overlay — adds the painterly
         # "paper grain" wash Sky CotL surfaces have. Tile the 512²
         # grayscale texture across world XY at ~12 BU/tile, screen-
