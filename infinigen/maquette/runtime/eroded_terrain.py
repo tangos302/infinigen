@@ -2238,6 +2238,39 @@ def make_eroded_terrain(
         b = h01 * (1 - fu) + h11 * fu
         return a * (1 - fv) + b * fv
 
+    # Sidecar terrain.json — the frontend's character-controller and
+    # camera-framing both need this to know the actual heightmap shape
+    # (so the character walks ON the visible mesh instead of on the
+    # editor's procedural terrain). Match the schema used by the
+    # legacy pipeline / Northstar so the existing serializer works.
+    try:
+        import json as _json
+        import os as _os
+        out_dir = _os.environ.get("MAQUETTE_OUT_DIR")
+        if out_dir:
+            # Downsample to a 64² grid for the sidecar — the character
+            # controller bilinear-samples and a 65k-vertex array bloats
+            # the JSON for no perceived gain. 64² is plenty for ground
+            # collision; cell ~4-5 BU at typical world sizes.
+            target_res = 64
+            stride = max(1, H.shape[0] // target_res)
+            H_down = H[::stride, ::stride].astype("float32")
+            res_down = int(H_down.shape[0])
+            terrain_json = {
+                "resolution": res_down,
+                "world_size": float(2 * size),
+                "heights": [float(v) for v in H_down.flatten().tolist()],
+                "seed": int(seed),
+                "biome_hint": str(palette_preset or "alpine"),
+                "amplitude": float(H_down.max() - H_down.min()),
+            }
+            from pathlib import Path as _Path
+            _Path(out_dir).joinpath("terrain.json").write_text(
+                _json.dumps(terrain_json)
+            )
+    except Exception as _exc:
+        print(f"[eroded_terrain] sidecar terrain.json skipped: {_exc}")
+
     return Terrain(height_at=height_at, obj=obj, heightmap=H, size=float(size))
 
 
