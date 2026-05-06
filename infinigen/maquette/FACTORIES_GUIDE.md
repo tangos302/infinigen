@@ -85,6 +85,11 @@ terrain = make_terrain(
 #       plain_offset=2.4,                  # lift plains so meadow dominates
 #       sea_level=0.5,                     # below = lakebed/shore
 #       erode_iters=35,                    # 25 soft, 35 default, 60 aggressive
+#       # outflow_xy=(140, 0),              # OPTIONAL: river-mouth outlet at this
+#       #                                   # world point (must be near a rim).
+#       #                                   # Forces drainage to converge on a
+#       #                                   # single mouth instead of dispersing.
+#       #                                   # Pair with troughs that lead toward it.
 #       # water=True is the default — auto-detects connected basins
 #       # below sea_level and drops one translucent blue cube per body.
 #       # Pass water=False to suppress (terrain-only renders).

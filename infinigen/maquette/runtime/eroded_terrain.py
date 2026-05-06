@@ -421,6 +421,77 @@ def _fill_sinks(z, eps: float = 1e-3):
     return filled
 
 
+def _carve_outflow_notch(
+    h,
+    *,
+    world_size: float,
+    outflow_xy: tuple[float, float],
+    depth: float,
+):
+    """Lower the boundary cell closest to ``outflow_xy`` (and a small fan
+    of neighbors that lie ON the boundary) by ``depth`` BU before
+    erosion runs.
+
+    Why: the eroder's boundary condition treats all 4 rim edges as
+    equivalent outlets, so drainage scatters across whichever edge is
+    locally easiest. Real watersheds funnel through ONE outlet (river
+    mouth). Lowering a single notch makes that outlet locally cheaper,
+    so flow accumulation favors it during the topological pass and
+    erosion carves a unified main-stem river toward it.
+
+    Implementation:
+      * Map ``outflow_xy`` (world coords, range ``[-size, +size]``) to
+        the closest grid cell.
+      * Snap that cell to the nearest boundary edge.
+      * Lower that cell + a 5-cell-wide fan along the same edge.
+      * The fan's depth tapers from ``depth`` at the center to ~30 % at
+        the edges, so the notch reads as a soft drainage saddle, not a
+        cliff cut.
+
+    Pure NumPy; no scipy / Blender deps. Returns a new heightmap;
+    does not mutate ``h``.
+    """
+    import numpy as np
+
+    res = h.shape[0]
+    span = 2.0 * world_size
+    res_minus = res - 1
+
+    fx, fy = float(outflow_xy[0]), float(outflow_xy[1])
+    u = (fx + world_size) / span * res_minus
+    v = (fy + world_size) / span * res_minus
+    i = int(round(max(0.0, min(res_minus, u))))
+    j = int(round(max(0.0, min(res_minus, v))))
+
+    # Snap to closest boundary edge.
+    edge_dists = (i, res_minus - i, j, res_minus - j)
+    edge_idx = edge_dists.index(min(edge_dists))
+    if edge_idx == 0:
+        i = 0
+    elif edge_idx == 1:
+        i = res_minus
+    elif edge_idx == 2:
+        j = 0
+    else:
+        j = res_minus
+
+    out = h.astype(np.float32, copy=True)
+    fan = 5  # half-width of the notch in grid cells (~3 % of res=256)
+    for k in range(-fan, fan + 1):
+        # Cosine taper: 1.0 at center, ~0.31 at the edges.
+        taper = 0.31 + 0.69 * (1.0 + np.cos(np.pi * k / max(fan, 1))) * 0.5
+        local_depth = float(depth) * float(taper)
+        if edge_idx in (0, 1):  # vertical edge: vary j
+            jj = j + k
+            if 0 <= jj < res:
+                out[jj, i] = max(0.0, float(out[jj, i]) - local_depth)
+        else:  # horizontal edge: vary i
+            ii = i + k
+            if 0 <= ii < res:
+                out[j, ii] = max(0.0, float(out[j, ii]) - local_depth)
+    return out
+
+
 def _erode(
     h,
     n_iter: int,
@@ -1300,6 +1371,8 @@ def make_eroded_terrain(
     water_low_poly_shader: bool = True,
     target_verts: int | None = 30000,
     composition=None,
+    outflow_xy: tuple[float, float] | None = None,
+    outflow_notch: float = 1.5,
     realistic_textures: bool | None = None,
     bake_for_export: bool | None = None,
     bake_resolution: int = 1024,
@@ -1466,6 +1539,15 @@ def make_eroded_terrain(
         aniso_theta_rad=aniso_theta_rad,
         dunes=dunes_active,
     )
+    if outflow_xy is not None:
+        H0 = _carve_outflow_notch(
+            H0,
+            world_size=float(size),
+            outflow_xy=outflow_xy,
+            depth=float(outflow_notch),
+        )
+        print(f"[eroded_terrain] outflow notch at xy={outflow_xy} "
+              f"depth={outflow_notch:.2f}")
     print(f"[eroded_terrain] eroding ({erode_iters} iter, deposition={deposition:.2f})")
     H = _erode(H0, n_iter=int(erode_iters), deposition=float(deposition))
     # Composition pass — bend the post-erosion heightmap to fit the
