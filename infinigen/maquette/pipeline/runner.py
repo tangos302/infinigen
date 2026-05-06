@@ -395,45 +395,7 @@ CRITICAL RULES:
        slightly off-axis (rot_z = math.radians(rng.uniform(-15, 15)))
        and clustered 2-3 deep.
 
-    d) DESERT FLORA DISCIPLINE — **mandatory** for any prompt with
-       `palette_preset='desert'` or any cactus/saguaro/dune content.
-
-       FORBIDDEN: a `for i in range(N): rng.uniform(...)` loop that
-       creates `LowPolyCactusFactory`. Every desert run that did this
-       has produced spike noise from random saguaro silhouettes, not a
-       designed desert. The rule is mechanical, not stylistic.
-
-       REQUIRED: use `place_grove` from
-       `infinigen.maquette.runtime.grove`:
-
-           from infinigen.maquette.runtime.grove import place_grove
-           from infinigen.maquette.factories.native.cactus import (
-               LowPolyCactusFactory,
-           )
-
-           place_grove(
-               factory_class=LowPolyCactusFactory,
-               centers=[(20, -15), (-30, 25), (45, 5)],   # 2-4 designed XYs
-               per_cluster=4,                              # 3-5 cacti each
-               radius=4.0,
-               terrain=terrain,
-               scale_range=(0.85, 1.15),
-               archetypes=("saguaro", "barrel"),
-               archetype_kwarg="cactus_archetype",
-               seed=SEED,
-           )
-
-       Pick 2-4 cluster centers that fit the composition (path bend,
-       ruin edge, beside a hero). Total cacti = len(centers) × per_cluster,
-       capped naturally at ~16. Anything more reads as noise.
-
-       OTHER DESERT FLORA:
-         * `LowPolyPalmTreeFactory` — oasis-only ring (8-12 trees
-           around the water). Do NOT scatter palms across dunes.
-         * `LowPolyTumbleweedFactory` — 4-8 max, horizontal foreground
-           silhouettes (no vertical noise added).
-         * Boulders + scrub bushes carry the wide-area spread; they
-           read as ground texture, not vertical pickets.
+    d) (reserved)
 
 13. SKY / WORLD BACKGROUND COLOUR — picking the right preset.
 
