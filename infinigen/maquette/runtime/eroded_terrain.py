@@ -306,7 +306,14 @@ def _build_heightmap(
     # Rotate world coords into ridge-aligned frame, stretch the along-axis.
     along = (cos_t * Xw_world + sin_t * Yw_world) * along_stretch
     cross = -sin_t * Xw_world + cos_t * Yw_world
-    for amp, freq in [(1.0, 1.0), (0.40, 2.1)]:
+    # Multi-scale octaves — broad / medium / small features mixed so
+    # the terrain has identifiable scale variation (not "every swell
+    # the same size"). Wavelengths roughly 60 / 28 / 13 BU on the
+    # 160 BU plane — the broad octave defines the rolling silhouette,
+    # medium adds character, small adds painterly grain. Total noise
+    # amplitude ~1.9 (was 1.4 on 2 octaves), post-mul keeps shape
+    # within ~3 BU of mean.
+    for amp, freq in [(0.90, 0.45), (0.70, 1.0), (0.30, 2.1)]:
         cx_axis = coords * freq / 28.0
         layer = nz_fbm.noise2array(cx_axis, cx_axis).astype(np.float32)
         # Map (along, cross) world coords to pixel coords on the layer.
@@ -319,9 +326,8 @@ def _build_heightmap(
             layer, [ay_pix, ax_pix], order=1, mode="reflect"
         ).astype(np.float32)
         fbm += amp * warped
-    # FBM amplitude bumped 1.0 → 1.6 to compensate for the dropped
-    # 3rd+4th octaves. Sky terrain is gentle ocean-swell undulation;
-    # ours was reading as pancake-flat without this lift.
+    # Post-mul 1.6 brings max FBM contribution to ~3 BU on a 16 BU
+    # max-elevation scene — gentle mixed-scale terrain, not pancake.
     h += fbm * 1.6
 
     # Micro detail — heavily reduced (was 0.25 amplitude). Painterly
