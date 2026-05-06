@@ -750,6 +750,33 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
     except Exception:
         pass
 
+    # 6. Voronoi biome drift — large-scale territorial character. Three
+    # independent low-freq HSV fields at ~90 BU wavelength shift each
+    # territory toward a different biome character (warm spring meadow
+    # vs cool autumn meadow, ochre vs grey stone). Composes with the
+    # smaller-scale (~22-30 BU) HSV macro pass that runs later on the
+    # mesh: this gives macro-scale "regions", that one gives within-
+    # region painterly variation. Replaces the deferred Voronoi-cell
+    # biome-region idea with smooth territorial drift instead of hard
+    # cell boundaries.
+    try:
+        from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
+        from opensimplex import OpenSimplex
+        nz_th = OpenSimplex(seed=int(seed) + 51)
+        nz_ts = OpenSimplex(seed=int(seed) + 53)
+        nz_tv = OpenSimplex(seed=int(seed) + 55)
+        coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 90.0)
+        th_field = nz_th.noise2array(coords1d, coords1d).astype(np.float32)
+        ts_field = nz_ts.noise2array(coords1d, coords1d).astype(np.float32)
+        tv_field = nz_tv.noise2array(coords1d, coords1d).astype(np.float32)
+        hsv = rgb_to_hsv(np.clip(out, 0, 1))
+        hsv[..., 0] = np.mod(hsv[..., 0] + th_field * 0.04, 1.0)
+        hsv[..., 1] = np.clip(hsv[..., 1] * (1.0 + ts_field * 0.15), 0, 1)
+        hsv[..., 2] = np.clip(hsv[..., 2] * (1.0 + tv_field * 0.06), 0, 1)
+        out = hsv_to_rgb(hsv).astype(np.float32)
+    except Exception:
+        pass
+
     return out
 
 
