@@ -682,21 +682,40 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0):
 
     out = np.array(col, dtype=np.float32, copy=True)
 
-    # 1. Slope tint — gentle. Painterly mode wants the rock band to read
-    # as a *suggestion* of rock under the cel-toon shading, not a high-
-    # contrast notch. Toon BSDF amplifies everything, so the amplitude
-    # is half what the chunky-poly pipeline used.
+    # 1. Slope tint — gentle two-tone. Cliffs lerp toward a blend of
+    # *warm ochre* and *cool grey* rock; a low-freq field decides which
+    # tone wins for each part of the scene. Sky CotL cliffs read as
+    # multi-coloured stone (sandstone amber, basalt grey) rather than
+    # uniform dark slabs. Painterly mode amplitude is half the chunky-
+    # poly pipeline since toon shading would otherwise over-emphasise.
     gy, gx = np.gradient(elev)
     slope = np.sqrt(gx * gx + gy * gy)
     s = np.clip((slope - 0.30) / 0.50, 0, 1)
     s = s * s * (3.0 - 2.0 * s)
-    rock_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.50
-    out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
+    res = elev.shape[0]
+    cool_rgb = np.array(_palette_linear("stone", palette), dtype=np.float32) * 0.50
+    warm_rgb = np.array((0.42, 0.30, 0.18), dtype=np.float32)  # sandstone ochre
+    try:
+        from opensimplex import OpenSimplex
+        nz_rock = OpenSimplex(seed=int(seed) + 61)
+        # ~50 BU wavelength so each cliff face reads a single tone.
+        coords1d = np.linspace(-1.0, 1.0, res, dtype=np.float64) * (res / 50.0)
+        rock_field = nz_rock.noise2array(coords1d, coords1d).astype(np.float32)
+        warm_mix = np.clip(rock_field * 0.5 + 0.5, 0, 1)  # [0, 1] cell weight
+        # Smoothstep for soft territorial boundaries.
+        warm_mix = warm_mix * warm_mix * (3.0 - 2.0 * warm_mix)
+        rock_rgb = (
+            cool_rgb[None, None, :] * (1 - warm_mix[..., None])
+            + warm_rgb[None, None, :] * warm_mix[..., None]
+        )
+        out = out * (1 - s[..., None]) + rock_rgb * s[..., None]
+    except Exception:
+        # OpenSimplex unavailable — fall back to single-tone cool.
+        out = out * (1 - s[..., None]) + cool_rgb * s[..., None]
 
     # 2. Smooth low-frequency macro variation — broad pasture tones, not
     # high-contrast splotches. ±5 % brightness off a smooth FBM (no
     # quantisation: continuous variation reads painterly).
-    res = elev.shape[0]
     coords = np.indices((res, res), dtype=np.float32) / float(res)
     seed_phase = float(seed) * 0.137
     n1 = np.cos(coords[0] * 6.0 + seed_phase) * np.sin(coords[1] * 7.0 + seed_phase * 1.3)
