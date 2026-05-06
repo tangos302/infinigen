@@ -567,6 +567,17 @@ terrain = make_terrain(
 #    so they read as a valley channel:
 #             lake_z = terrain.height_at(cx, cy) - 0.3
 
+# 2b. Dress paths with props (lanterns / curb stones / fence posts).
+#     ONE call per Composition with paths; runs AFTER apply_composition so
+#     terrain.height_at returns the carved saddle.
+# from infinigen.maquette.runtime.dress_path import dress_path
+# dress_path(composition, archetype="lantern_posts", terrain=terrain)
+#   archetype: "lantern_posts" (stone_road/town/temple, 6 BU cadence)
+#              "curb_stones"  (dirt_trail/wilderness, 2 BU cadence)
+#              "fence_posts"  (farm/pasture, 4 BU cadence)
+#   Don't pass `spacing` — defaults are tuned. Skip dress_path entirely
+#   when there's no path.
+
 # 3. Camera + sun + world background
 # Camera is auto-placed by `place_scene_camera(composition, terrain_size=...,
 # terrain=terrain)` — DO NOT call `bpy.ops.object.camera_add`.

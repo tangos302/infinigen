@@ -144,14 +144,25 @@ terrain = make_terrain(
 #    so they read as a valley channel:
 #             lake_z = terrain.height_at(cx, cy) - 0.3
 
+# 2b. Dress paths with props (lanterns / curb stones / fence posts).
+#     ONE call per Composition with paths; runs AFTER apply_composition so
+#     terrain.height_at returns the carved saddle.
+# from infinigen.maquette.runtime.dress_path import dress_path
+# dress_path(composition, archetype="lantern_posts", terrain=terrain)
+#   archetype: "lantern_posts" (stone_road/town/temple, 6 BU cadence)
+#              "curb_stones"  (dirt_trail/wilderness, 2 BU cadence)
+#              "fence_posts"  (farm/pasture, 4 BU cadence)
+#   Don't pass `spacing` — defaults are tuned. Skip dress_path entirely
+#   when there's no path.
+
 # 3. Camera + sun + world background
-# Camera is auto-placed by `place_scene_camera(composition, terrain_size=...)` —
-# DO NOT call `bpy.ops.object.camera_add` or set cam.location yourself.
-# The runtime helper picks framing from your Composition (hero + water +
-# ridge) so the watchtower silhouettes against sky and the lake sits in
-# foreground. Pass the same composition you handed to make_eroded_terrain.
+# Camera is auto-placed by `place_scene_camera(composition, terrain_size=...,
+# terrain=terrain)` — DO NOT call `bpy.ops.object.camera_add`.
+# Pass `terrain=terrain` so the helper samples the actual height under
+# the hero (otherwise tall heroes get cropped). Don't pass `lens_mm` —
+# the 35 mm default is correct.
 from infinigen.maquette.runtime.camera import place_scene_camera
-place_scene_camera(composition, terrain_size=80)
+place_scene_camera(composition, terrain_size=80, terrain=terrain)
 
 bpy.ops.object.light_add(type="SUN", location=(<X>, <Y>, <Z>))
 sun = bpy.context.active_object
@@ -246,13 +257,18 @@ DO NOT author the camera. Call:
 
 ```python
 from infinigen.maquette.runtime.camera import place_scene_camera
-place_scene_camera(composition, terrain_size=80)
+place_scene_camera(composition, terrain_size=80, terrain=terrain)
 ```
 
-The helper picks framing from your `Composition`: hero + water →
-camera past the lake looking at the hero, hero + ridge → camera
-perpendicular to the ridge axis. Pass `lens_mm=50` for tight prop
-shots; default 35 mm is the wide scene default.
+ALWAYS pass `terrain=terrain` so the helper samples the actual height
+under the hero (otherwise a hero on a 12 BU peak gets cropped at the
+top of frame). The helper picks framing from your `Composition`:
+hero + water → camera past the lake looking at the hero, hero + ridge
+→ camera perpendicular to the ridge axis.
+
+DO NOT pass `lens_mm` — the 35 mm default is correct for almost every
+prompt. Override only for explicit 4+ hero panoramas (`lens_mm=28`).
+Never pass 50 mm; it crops the hero on tall terrain.
 
 ---
 
