@@ -497,29 +497,39 @@ def _carve_outflow_notch(
     return out
 
 
-def _clamp_spike_cells(z, max_excess: float = 0.8):
-    """Cap per-cell elevation at (8-neighbor mean + ``max_excess``).
+def _clamp_spike_cells(z, max_excess: float = 0.35, iterations: int = 5):
+    """Cap per-cell elevation at (8-neighbor mean + ``max_excess``),
+    iterated ``iterations`` times.
 
-    Removes single-cell deposit pyramids from the eroder's sediment-
-    routing pass: drainage converges on one receiver cell, the
-    deposition step (``frac * sediment``, ``frac → 0.4`` on flat
-    receivers) dumps ALL upstream sediment into that single cell, and
-    the cell sticks up as a 4-triangle pyramid against its neighbors.
+    Removes deposit pyramids from the eroder's sediment-routing pass:
+    drainage converges on one receiver cell, the deposition step
+    (``frac * sediment``, ``frac → 0.4`` on flat receivers) dumps ALL
+    upstream sediment into that cell, which sticks up as a 4-triangle
+    pyramid against its neighbors.
+
+    Iteration handles multi-cell spike clusters (2-3 adjacent cells all
+    high). On the first pass, the edge cells of the cluster have
+    neighbor-means biased low (some neighbors are below the cluster);
+    those edges get clipped first. Subsequent passes chisel inward.
+    3 iterations covers clusters up to ~5 cells across.
 
     Pure NumPy 8-neighbor mean clamp. Doesn't touch smooth dunes or
-    broad designed peaks (those have neighbors close to the same
-    elevation, so their cap is high). Returns a NEW heightmap.
+    broad designed peaks (their neighbors share elevation, so the cap
+    sits high). Returns a NEW heightmap.
     """
     import numpy as np
 
-    z_pad = np.pad(z, 1, mode="edge")
-    neigh_mean = (
-        z_pad[0:-2, 0:-2] + z_pad[0:-2, 1:-1] + z_pad[0:-2, 2:]
-        + z_pad[1:-1, 0:-2]                     + z_pad[1:-1, 2:]
-        + z_pad[2:,   0:-2] + z_pad[2:,   1:-1] + z_pad[2:,   2:]
-    ) / 8.0
-    cap = neigh_mean + float(max_excess)
-    return np.minimum(z, cap).astype(np.float32)
+    out = z.astype(np.float32, copy=True)
+    for _ in range(int(iterations)):
+        z_pad = np.pad(out, 1, mode="edge")
+        neigh_mean = (
+            z_pad[0:-2, 0:-2] + z_pad[0:-2, 1:-1] + z_pad[0:-2, 2:]
+            + z_pad[1:-1, 0:-2]                     + z_pad[1:-1, 2:]
+            + z_pad[2:,   0:-2] + z_pad[2:,   1:-1] + z_pad[2:,   2:]
+        ) / 8.0
+        cap = neigh_mean + float(max_excess)
+        out = np.minimum(out, cap).astype(np.float32)
+    return out
 
 
 def _erode(
@@ -1598,15 +1608,17 @@ def make_eroded_terrain(
               f"depth={outflow_notch:.2f}")
     print(f"[eroded_terrain] eroding ({erode_iters} iter, deposition={deposition:.2f})")
     H = _erode(H0, n_iter=int(erode_iters), deposition=float(deposition))
-    # Post-erode spike clamp: removes single-cell deposit pyramids from
-    # drainage convergence (multiple upstream cells routing to one flat
-    # receiver dump 40 % of their sediment in that one cell, which then
-    # sticks up as a 4-triangle pyramid). 8-neighbor mean cap with 0.8 BU
-    # excess. Smooth dunes and designed peaks are untouched.
-    spike_count_before = int(((H - _clamp_spike_cells(H, max_excess=0.8)) > 1e-3).sum())
-    H = _clamp_spike_cells(H, max_excess=0.8)
-    if spike_count_before > 0:
-        print(f"[eroded_terrain] clamped {spike_count_before} spike cells")
+    # Post-erode spike clamp: removes deposit pyramids from drainage
+    # convergence (multiple upstream cells routing to one flat receiver
+    # dump 40 % of their sediment in that one cell, which sticks up as
+    # a 4-triangle pyramid). 8-neighbor mean cap with 0.35 BU excess,
+    # iterated 3x to chisel multi-cell clusters from the edges in.
+    # Smooth dunes and designed peaks are untouched.
+    H_clamped = _clamp_spike_cells(H)
+    spike_count = int(((H - H_clamped) > 1e-3).sum())
+    H = H_clamped
+    if spike_count > 0:
+        print(f"[eroded_terrain] clamped {spike_count} spike cells")
     # Composition pass — bend the post-erosion heightmap to fit the
     # known scene composition (hero plateaus, path saddles, water basin).
     # See runtime/influence.py for the operators. Applied AFTER erosion

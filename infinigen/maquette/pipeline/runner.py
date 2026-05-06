@@ -657,9 +657,9 @@ script must stand on its own.
 
 
 _CATEGORY_LABELS = {
-    "terrain": "Terrain & Water (ground heightmap, water bodies, vegetation, rocks)",
+    "terrain": "Terrain & Water (ground heightmap + water bodies ONLY — no factory spawns)",
     "landmarks": "Landmarks (hero structures: buildings, bridges, windmills, torii)",
-    "objects": "Objects (props, scatter, fences, lanterns, banners, crates)",
+    "objects": "Objects (props, scatter, vegetation, rocks, fences, lanterns)",
 }
 
 
@@ -805,6 +805,22 @@ def build_prompt(
         if included and excluded:
             included_lines = "\n".join(f"  - {c}: {_CATEGORY_LABELS[c]}" for c in included)
             excluded_lines = "\n".join(f"  - {c}" for c in excluded)
+            terrain_only = included == ["terrain"]
+            terrain_only_clause = (
+                "\nTERRAIN-ONLY RUN: the script must contain ZERO factory\n"
+                "constructor calls (no `LowPoly*Factory(...)`, no `*Tree*(...)`,\n"
+                "no `*Boulder*(...)`, etc.). Build only:\n"
+                "  1. the ground via `make_terrain` / `make_eroded_terrain` /\n"
+                "     `make_multi_biome_terrain` (with optional Composition for\n"
+                "     hero plateaus / paths / water basins),\n"
+                "  2. the camera (via `place_scene_camera`),\n"
+                "  3. sun + world background,\n"
+                "  4. render + save.\n"
+                "No palms, no boulders, no anchor props, no scatter calls. The\n"
+                "user is iterating on terrain shape; props would just slow the\n"
+                "loop. The validator skips the <8 factories check on this mode.\n"
+                if terrain_only else ""
+            )
             category_block = (
                 "## CATEGORY RESTRICTION (debug mode)\n\n"
                 "This is a partial-build run. Only spawn factories from the\n"
@@ -813,7 +829,8 @@ def build_prompt(
                 "and do not include them in the SCENE_PLAN's category arrays\n"
                 "(use [] for excluded ones).\n\n"
                 f"INCLUDE:\n{included_lines}\n\n"
-                f"EXCLUDE:\n{excluded_lines}\n\n"
+                f"EXCLUDE:\n{excluded_lines}\n"
+                f"{terrain_only_clause}\n"
                 "Always still build the ground via make_terrain — the scene\n"
                 "needs a floor even if other categories are skipped.\n"
                 "Camera + sun + world background are always required.\n\n"
