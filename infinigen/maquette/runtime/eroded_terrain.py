@@ -1446,6 +1446,81 @@ def _build_water_mesh(name: str, mask, size: float, water_level: float, thicknes
     return obj
 
 
+def _place_explicit_water(
+    water_spec,
+    H,
+    *,
+    size: float,
+    water_thickness: float,
+    use_low_poly_shader: bool,
+    water_color: tuple[float, float, float, float],
+):
+    """Place a water mesh at an explicit ``Composition.water`` location.
+
+    Used when the LLM authored a Water primitive that doesn't dip below
+    ``sea_level`` (e.g. an oasis basin carved 1.2 BU into a plateau
+    sitting at 5 BU — basin floor 3.8 BU, sea_level 0.5 → auto-water
+    misses it). The LLM intent is "there is water here," so we honor
+    it directly: a circular footprint at ``(cx, cy)`` of radius
+    ``radius``, sitting just above the carved basin floor.
+
+    Water surface elevation: sample the eroded heightmap at the water
+    center (which reflects the carved basin floor since basin_radial
+    runs in apply_composition) and add a small offset so the surface
+    sits above the lowest cell of the basin but below the basin's
+    rim — reads as a pool surface.
+    """
+    import bpy
+    import numpy as np
+
+    res = H.shape[0]
+    span = 2.0 * float(size)
+    res_minus = res - 1
+
+    # World → grid coords for sampling.
+    cx_w = float(getattr(water_spec, "cx", 0.0))
+    cy_w = float(getattr(water_spec, "cy", 0.0))
+    radius_w = float(getattr(water_spec, "radius", 5.0))
+
+    fi = (cx_w + size) / span * res_minus
+    fj = (cy_w + size) / span * res_minus
+    i = int(np.clip(round(fi), 0, res_minus))
+    j = int(np.clip(round(fj), 0, res_minus))
+
+    # Water surface sits just above the basin floor — ~0.6 BU above the
+    # sampled center cell. The carved basin is bowl-shaped (deepest at
+    # center), so this puts the surface above the deepest point and
+    # below most of the basin rim, producing a visible pool.
+    basin_floor_z = float(H[j, i])
+    water_z = basin_floor_z + 0.6
+
+    # Footprint mask: cells within radius_w (in world BU) of the water
+    # center. Convert world radius to grid cells.
+    cell = span / res_minus
+    radius_cells = max(1, int(np.ceil(radius_w / cell)))
+    yy, xx = np.indices(H.shape, dtype=np.float32)
+    cell_world_x = (xx / res_minus) * span - size
+    cell_world_y = (yy / res_minus) * span - size
+    d = np.hypot(cell_world_x - cx_w, cell_world_y - cy_w)
+    mask = (d <= radius_w).astype(bool)
+    if int(mask.sum()) < 4:
+        return []  # too small to mesh
+
+    obj = _build_water_mesh(
+        f"OasisWater_{i}_{j}", mask, size=size,
+        water_level=water_z, thickness=water_thickness,
+    )
+
+    # Apply the same low-poly water shader as the auto-water path.
+    if use_low_poly_shader:
+        try:
+            from infinigen.maquette.materials import apply_water_material
+            apply_water_material(obj)
+        except Exception:
+            pass
+    return [obj]
+
+
 def _place_water_volumes(
     H,
     sea_level: float,
@@ -2124,6 +2199,19 @@ def make_eroded_terrain(
                 use_low_poly_shader=water_low_poly_shader,
                 water_color=water_color,
             )
+            # Composition.water — explicit LLM-authored basin. Place a
+            # water mesh at the requested location regardless of
+            # sea_level (the carved basin probably sits above sea_level
+            # on a plateau, so auto-detection misses it).
+            if composition is not None and getattr(composition, "water", None) is not None:
+                explicit_objs = _place_explicit_water(
+                    composition.water, H,
+                    size=size,
+                    water_thickness=water_thickness,
+                    use_low_poly_shader=water_low_poly_shader,
+                    water_color=water_color,
+                )
+                water_objs.extend(explicit_objs)
             print(f"[eroded_terrain] placed {len(water_objs)} water volume(s)")
         except Exception as exc:
             # Non-fatal — the terrain itself is still good without water.
