@@ -963,16 +963,20 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     out = np.clip(out * tint, 0, 1)
 
     # 4. Crest highlight strip — second derivative of elev highlights
-    # ridge tops; soft positive Gaussian Laplacian → multiply by
-    # (1 + 0.10) on those cells. Looks like sun-touched snow rims.
+    # ridge tops; soft positive Gaussian Laplacian. Tinted WARM (not
+    # uniform brightness) — Sky's rim accents catch sun-light, so they
+    # read as a warmer hue, not just a brighter version of the surface.
+    # +18 % red / +10 % green / -5 % blue on the crest mask.
     try:
         from scipy.ndimage import gaussian_laplace
         crest = (-gaussian_laplace(elev.astype(np.float32), sigma=2.0)).astype(np.float32)
-        # Normalize to [0, 1] using positive max (negative = valleys).
         max_pos = max(float(crest.max()), 1e-3)
         crest = np.clip(crest / max_pos, 0, 1)
         crest = crest * crest  # square so only sharpest ridges hit
-        out = np.clip(out * (1.0 + 0.10 * crest[..., None]), 0, 1)
+        warm_rim = np.array([1.18, 1.10, 0.95], dtype=np.float32)
+        out_warm = out * warm_rim[None, None, :]
+        m = crest[..., None]
+        out = np.clip(out * (1.0 - m) + out_warm * m, 0, 1)
     except Exception:
         pass
 
