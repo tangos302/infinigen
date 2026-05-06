@@ -90,6 +90,11 @@ def add_aerial_perspective(
     cube = bpy.context.active_object
     cube.name = "AerialPerspectiveBox"
     cube["songe_aerial_box"] = 1
+    # Tell the OBJ exporter to skip this cube. The transparent surface
+    # + volume scatter are Cycles-only — when the cube survives into
+    # the OBJ, MTL strips the volume shader and the geometry becomes
+    # a giant grey box wrapped around every browser-loaded scene.
+    cube["songe_no_export"] = 1
 
     # Make the cube invisible to direct rays so it doesn't darken the
     # scene or block the sun. We still want the volume to render — that
