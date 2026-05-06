@@ -932,14 +932,13 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     # generic painterly look.
     palette_name = (palette_preset or "").lower()
     if dunes:
-        # Desert: VALUE contrast within the warm-tan band. Sky Wasteland
-        # dunes have bright sun-touched crests AND deeper warm-tan
-        # shadow valleys — the hue stays warm, the brightness varies
-        # widely. (Earlier rust-shadow recipe pulled mid-tones to mauve.)
-        # Mild blue lift in shadow (0.72→0.74 in B) avoids the all-warm
-        # flatness without going cool/pink.
-        cool_shadow = np.array([0.72, 0.68, 0.62], dtype=np.float32)
-        warm_lit    = np.array([1.18, 1.10, 0.92], dtype=np.float32)
+        # Desert: very subtle Lambert. Sky CotL Wasteland dunes are nearly
+        # monochromatic — the sand reads as one tone with only a faint
+        # warm-cool shift between lit and shadowed sides. Wider ranges
+        # (0.62→1.18) made dome-mode hero terrain look patchy/striated
+        # because every slope shows. ~0.92→1.06 keeps the sand unified.
+        cool_shadow = np.array([0.92, 0.88, 0.82], dtype=np.float32)
+        warm_lit    = np.array([1.06, 1.02, 0.94], dtype=np.float32)
     elif palette_name == "tropical":
         cool_shadow = np.array([0.72, 0.86, 0.92], dtype=np.float32)  # cool aqua shadow
         warm_lit    = np.array([1.10, 1.04, 0.85], dtype=np.float32)  # bright lemon
@@ -971,18 +970,21 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     # uniform brightness) — Sky's rim accents catch sun-light, so they
     # read as a warmer hue, not just a brighter version of the surface.
     # +18 % red / +10 % green / -5 % blue on the crest mask.
-    try:
-        from scipy.ndimage import gaussian_laplace
-        crest = (-gaussian_laplace(elev.astype(np.float32), sigma=2.0)).astype(np.float32)
-        max_pos = max(float(crest.max()), 1e-3)
-        crest = np.clip(crest / max_pos, 0, 1)
-        crest = crest * crest  # square so only sharpest ridges hit
-        warm_rim = np.array([1.18, 1.10, 0.95], dtype=np.float32)
-        out_warm = out * warm_rim[None, None, :]
-        m = crest[..., None]
-        out = np.clip(out * (1.0 - m) + out_warm * m, 0, 1)
-    except Exception:
-        pass
+    # SKIPPED on dunes — every dune sinusoid ridge becomes a visible
+    # warm stripe, which turns the unified sand into a banded pattern.
+    if not dunes:
+        try:
+            from scipy.ndimage import gaussian_laplace
+            crest = (-gaussian_laplace(elev.astype(np.float32), sigma=2.0)).astype(np.float32)
+            max_pos = max(float(crest.max()), 1e-3)
+            crest = np.clip(crest / max_pos, 0, 1)
+            crest = crest * crest  # square so only sharpest ridges hit
+            warm_rim = np.array([1.18, 1.10, 0.95], dtype=np.float32)
+            out_warm = out * warm_rim[None, None, :]
+            m = crest[..., None]
+            out = np.clip(out * (1.0 - m) + out_warm * m, 0, 1)
+        except Exception:
+            pass
 
     # 5. Surface character — occasional rocky / dirt patches. Sample a
     # coarse Voronoi via low-frequency noise; cells with the lowest
