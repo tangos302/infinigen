@@ -13,11 +13,20 @@ then writes a build script that calls the factories.
 Why AST instead of import: importing the modules pulls in `bpy` which
 needs Blender. The pipeline runs from a regular Python env (not inside
 Blender), so we keep the guide-gen Blender-free.
+
+Prompt-aware filtering: when ``build_guide(user_prompt=...)`` is called
+with a prompt string, we tokenize the prompt and rank factories by
+keyword overlap (class name, archetypes, doc pitch). Factories above
+threshold get the full constructor-signature entry; the rest collapse
+to a one-line "exists if you need it" summary. This typically halves
+the catalog token weight on focused prompts (zen garden, blacksmith)
+without hiding any factory entirely.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 import textwrap
 from pathlib import Path
 
@@ -216,8 +225,118 @@ def _factory_files(mode: str = "low_poly") -> list[Path]:
     return out
 
 
+# Hand-curated keyword expansions for class-name tokens that are too
+# generic on their own. The CamelCase splitter alone gives "tree" /
+# "boulder" / "fence" — fine. But "torii" doesn't lexically match
+# "japanese" / "shrine" / "zen", so we add synonyms here. Empty list =
+# no expansion (rely on class-name + archetypes).
+_FACTORY_KEYWORD_EXPANSIONS: dict[str, list[str]] = {
+    "torii": ["zen", "japanese", "shrine", "gate", "garden"],
+    "lantern_post": ["lantern", "lamp", "light", "post", "garden"],
+    "fence": ["fence", "gate", "wall", "boundary", "garden", "yard"],
+    "tree": ["tree", "forest", "grove", "wood", "garden"],
+    "boulder": ["rock", "boulder", "stone", "moss"],
+    "rock_arch": ["arch", "gateway", "portal", "rock"],
+    "lighthouse": ["lighthouse", "beacon", "harbour", "harbor", "coast", "cliff"],
+    "well": ["well", "village", "settlement", "courtyard"],
+    "barrel": ["barrel", "cart", "market", "yard"],
+    "crate": ["crate", "box", "yard", "market", "cargo"],
+    "watchtower": ["watchtower", "tower", "lookout", "guard"],
+    "cabin": ["cabin", "house", "hut", "village"],
+    "cottage": ["cottage", "house", "village", "rural"],
+    "stone_wall": ["wall", "ruin", "ruins", "ancient"],
+    "shrine": ["shrine", "altar", "monk", "temple", "zen"],
+    "obelisk": ["obelisk", "monument", "monolith", "pillar"],
+    "campfire": ["camp", "campfire", "fire", "hearth"],
+    "pier": ["pier", "dock", "harbour", "harbor", "wetland"],
+    "bridge": ["bridge", "span", "river", "stream"],
+    "windmill": ["windmill", "mill", "rural", "field"],
+}
+
+
+_TOKEN_RE = re.compile(r"[a-z]+")
+
+
+def _camel_split(name: str) -> list[str]:
+    """LowPolyTreeFactory → ['low', 'poly', 'tree', 'factory']."""
+    return [m.group(0).lower() for m in re.finditer(r"[A-Z][a-z]*|[a-z]+", name)]
+
+
+def _factory_keywords(
+    class_name: str, mod_pitch: str, archetype_tuples: list[tuple[str, list[str]]],
+    file_stem: str,
+) -> set[str]:
+    """Collect keywords for a factory: class-name tokens, file stem,
+    archetype values, hand-curated expansions, and pitch nouns."""
+    kw: set[str] = set()
+    # Class name camel split, dropping noise prefixes/suffixes
+    for tok in _camel_split(class_name):
+        if tok in ("low", "poly", "factory", "native", "realistic"):
+            continue
+        kw.add(tok)
+    # File stem (e.g. "lantern_post") and its underscore-split parts
+    kw.add(file_stem)
+    kw.update(file_stem.split("_"))
+    # Archetype values
+    for _, values in archetype_tuples:
+        for v in values:
+            kw.update(_TOKEN_RE.findall(v.lower()))
+    # Hand-curated synonyms
+    if file_stem in _FACTORY_KEYWORD_EXPANSIONS:
+        kw.update(_FACTORY_KEYWORD_EXPANSIONS[file_stem])
+    # Pitch nouns (first sentence) — coarse: every token of length ≥ 4
+    if mod_pitch:
+        for tok in _TOKEN_RE.findall(mod_pitch.lower()):
+            if len(tok) >= 4 and tok not in _PITCH_STOP:
+                kw.add(tok)
+    return kw
+
+
+# Words that show up in pitches but tell us nothing useful for matching.
+_PITCH_STOP = {
+    "factory", "maquette", "wrapper", "upstream", "stylized", "stylised",
+    "default", "produces", "asset", "module", "param", "params", "single",
+    "class", "scene", "build", "callable", "method", "spawn", "spawns",
+    "low", "poly", "stylization", "stylisation", "native",
+}
+
+
+def _prompt_tokens(prompt: str) -> set[str]:
+    """Lowercase tokens from the prompt, length ≥ 3, minus common
+    English filler. Coarse but deterministic."""
+    tokens: set[str] = set()
+    for tok in _TOKEN_RE.findall(prompt.lower()):
+        if len(tok) >= 3 and tok not in _PROMPT_STOP:
+            tokens.add(tok)
+    return tokens
+
+
+_PROMPT_STOP = {
+    "the", "and", "with", "for", "from", "this", "that", "these", "those",
+    "into", "over", "under", "around", "near", "next", "between",
+    "between", "early", "late", "morning", "afternoon", "evening", "night",
+    "small", "large", "tiny", "huge", "big", "long", "short", "wide", "narrow",
+    "old", "new", "ancient", "modern", "scattered", "few", "some", "several",
+    "are", "was", "were", "have", "has", "had", "been", "their", "there",
+    "very", "still", "just", "much", "many", "most", "less", "more",
+    "but", "yet", "out", "any", "all", "one", "two", "three", "four", "five",
+    "six", "seven", "eight", "nine", "ten", "first", "last", "main",
+    "his", "her", "its", "our", "your", "him", "she", "they",
+}
+
+
+# Always-show factory file stems — these are the structural primitives
+# that EVERY scene needs (terrain, ground, sky/sun) regardless of prompt.
+# Keeping them at full detail prevents the model from skipping them on
+# narrow prompts.
+_ALWAYS_FULL_STEMS: set[str] = {
+    "tree",          # almost every scene has at least one
+    "boulder",       # universally useful
+}
+
+
 def _entry_for(path: Path) -> str | None:
-    """Build the markdown entry for a single factory file."""
+    """Build the full markdown entry for a single factory file."""
     src = path.read_text()
     try:
         tree = ast.parse(src)
@@ -254,6 +373,51 @@ def _entry_for(path: Path) -> str | None:
             parts.append("```")
     parts.append("")
     return "\n".join(parts)
+
+
+def _short_entry_for(path: Path) -> str | None:
+    """One-line factory summary for unmatched factories. Includes the
+    class name + first sentence of doc + archetype count, so the model
+    knows the factory exists and can request constructor details on a
+    retry by widening keywords or asking explicitly.
+    """
+    src = path.read_text()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    cls = _find_factory_class(tree)
+    if cls is None:
+        return None
+    class_name, _ = cls
+    mod_doc = _module_docstring(tree) or ""
+    mod_pitch = next((ln for ln in mod_doc.splitlines() if ln.strip()), "").strip()
+    # Trim pitch to first sentence (keep it tight)
+    pitch = mod_pitch.split(".")[0].strip()
+    if len(pitch) > 110:
+        pitch = pitch[:107] + "…"
+    arch_count = sum(len(v) for _, v in _find_archetype_tuples(tree))
+    arch_note = f" — {arch_count} archetype(s)" if arch_count else ""
+    if pitch:
+        return f"- `{class_name}`{arch_note} — {pitch}"
+    return f"- `{class_name}`{arch_note}"
+
+
+def _file_keywords(path: Path) -> tuple[str, set[str]] | None:
+    """Return (class_name, keyword_set) for a factory file, or None if
+    the file doesn't define a factory."""
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return None
+    cls = _find_factory_class(tree)
+    if cls is None:
+        return None
+    class_name, _ = cls
+    mod_doc = _module_docstring(tree) or ""
+    mod_pitch = next((ln for ln in mod_doc.splitlines() if ln.strip()), "")
+    archetype_tuples = _find_archetype_tuples(tree)
+    return class_name, _factory_keywords(class_name, mod_pitch, archetype_tuples, path.stem)
 
 
 _HEADER = """\
@@ -870,16 +1034,81 @@ Generated automatically by `infinigen.maquette.pipeline.factories_guide`.
 """
 
 
-def build_guide(mode: str = "low_poly") -> str:
-    """Build the full markdown guide string for the given mode."""
+def build_guide(mode: str = "low_poly", *, user_prompt: str | None = None) -> str:
+    """Build the markdown guide string for the given mode.
+
+    When ``user_prompt`` is provided, factories are scored by keyword
+    overlap (class name + archetypes + hand-curated synonyms + pitch
+    nouns vs prompt tokens). Matched factories get the FULL constructor
+    entry; unmatched ones collapse to a one-line summary. This typically
+    halves catalog token weight on focused prompts (zen garden,
+    blacksmith) while keeping every factory discoverable by name.
+
+    Threshold rules:
+      - Match score ≥ 1 keyword overlap → full entry
+      - Otherwise: short entry (- ``ClassName`` — pitch)
+      - The structural-primitive ``_ALWAYS_FULL_STEMS`` set always gets
+        a full entry regardless of overlap (terrain helpers etc.)
+
+    Pass ``user_prompt=None`` (default) to fall back to the legacy
+    "every factory at full detail" output — used by ``write_guide()``
+    so the on-disk reference doc stays comprehensive.
+    """
     if mode not in VALID_MODES:
         raise ValueError(f"mode={mode!r} not in {VALID_MODES}")
     header = _HEADER if mode == "low_poly" else _HEADER_REALISTIC
     parts = [header]
-    for path in _factory_files(mode):
+
+    files = _factory_files(mode)
+    if user_prompt is None:
+        # Legacy full-detail output (write_guide / inspection / fallback).
+        for path in files:
+            entry = _entry_for(path)
+            if entry:
+                parts.append(entry)
+        parts.append(_FOOTER)
+        return "\n".join(parts)
+
+    # Prompt-aware filtering path.
+    p_tokens = _prompt_tokens(user_prompt)
+    matched: list[Path] = []
+    unmatched: list[Path] = []
+    for path in files:
+        info = _file_keywords(path)
+        if info is None:
+            continue
+        _name, kw = info
+        if path.stem in _ALWAYS_FULL_STEMS or (kw & p_tokens):
+            matched.append(path)
+        else:
+            unmatched.append(path)
+
+    # Full entries for matched factories.
+    for path in matched:
         entry = _entry_for(path)
         if entry:
             parts.append(entry)
+
+    # Compact roster of unmatched factories so the model knows what
+    # else exists. Keep the section header brief; per-line entries are
+    # the short form.
+    if unmatched:
+        parts.append("## Other available factories (one-line summary)")
+        parts.append("")
+        parts.append(
+            "These factories exist in the catalog but didn't match prompt "
+            "keywords. If your scene actually needs one, use the closest "
+            "match by name and don't sweat the parameters — the validator "
+            "will lint a misuse and we'll retry. To learn the constructor "
+            "details, ask explicitly in your reasoning step."
+        )
+        parts.append("")
+        for path in unmatched:
+            entry = _short_entry_for(path)
+            if entry:
+                parts.append(entry)
+        parts.append("")
+
     parts.append(_FOOTER)
     return "\n".join(parts)
 
@@ -893,7 +1122,9 @@ def guide_path_for(mode: str) -> Path:
 
 
 def write_guide(out_path: Path | None = None, mode: str = "low_poly") -> Path:
-    """Build and write to disk. Default location depends on mode."""
+    """Build and write to disk. Default location depends on mode.
+    Always uses the FULL output (no prompt filtering) so the on-disk
+    doc remains the canonical reference."""
     if out_path is None:
         out_path = guide_path_for(mode)
     out_path.write_text(build_guide(mode))

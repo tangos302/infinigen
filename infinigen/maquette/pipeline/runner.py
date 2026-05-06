@@ -25,6 +25,7 @@ from .factories_guide import (
     FORK_ROOT,
     MAQUETTE_DIR,
     VALID_MODES,
+    build_guide,
     guide_path_for,
     write_guide,
 )
@@ -761,8 +762,14 @@ def build_prompt(
     if mode not in VALID_MODES:
         raise ValueError(f"mode={mode!r} not in {VALID_MODES}")
     if regenerate_guide:
+        # Keep the on-disk reference doc up to date (full detail) for
+        # human inspection. The brief sent to the model uses the
+        # prompt-filtered build_guide call below, NOT this file.
         write_guide(mode=mode)
-    guide = _read_text(guide_path_for(mode))
+    # Prompt-aware factory filtering: only matched factories carry full
+    # constructor sigs; the rest collapse to one-liners. Cuts the
+    # catalog by ~50 % on focused prompts (zen garden, blacksmith).
+    guide = build_guide(mode=mode, user_prompt=user_prompt)
     # The canonical example was authored against low-poly factories; in
     # realistic mode the inline skeleton in the header is enough and a
     # mismatched example would confuse the model.
