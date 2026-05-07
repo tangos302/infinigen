@@ -195,10 +195,20 @@ class LowPolyCrateFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if crate_archetype not in _CRATE_ARCHETYPES:
-            raise ValueError(
-                f"unknown crate_archetype {crate_archetype!r}; "
-                f"valid: {_CRATE_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[crate_archetype] WARN: unknown crate_archetype "
+                f"{crate_archetype!r}; falling back to {_CRATE_ARCHETYPES[0]!r}. "
+                f"Valid: {_CRATE_ARCHETYPES}",
+                file=sys.stderr,
             )
+            crate_archetype = _CRATE_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[crate_archetype]
         self.crate_archetype = crate_archetype
         s = size if size is not None else d["size"]

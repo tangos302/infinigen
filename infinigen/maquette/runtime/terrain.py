@@ -168,14 +168,21 @@ def _srgb_to_linear_rgba(rgba):
 
 
 # Default ground color per style — used when a multi-biome zone doesn't
-# specify a `color`. Hand-picked to read distinctly across the OBJ/MTL
-# round trip (Kd values map to flat colors in the Three.js viewer).
+# specify a `color`. Tuned 2026-05-07 toward Sky CotL realm tones so the
+# flat-shaded `make_terrain` path lands in the same color story as the
+# `make_eroded_terrain` palette presets. Note: this code path renders via
+# Principled BSDF Kd (single flat color per zone, no per-vertex Lambert
+# or crest pass), so it can never match the painterly vertex-color depth
+# of `make_eroded_terrain`. The factories_guide brief steers prompts
+# toward `make_eroded_terrain` for any painterly look — these defaults
+# only need to land in roughly-the-right realm tone for the
+# `make_multi_biome_terrain` and basic `make_terrain` fallback paths.
 _DEFAULT_COLORS: dict[str, tuple[float, float, float, float]] = {
-    "flat":    (0.50, 0.55, 0.45, 1.0),  # neutral mossy-grey (also used as ocean floor)
-    "rolling": (0.42, 0.55, 0.30, 1.0),  # grassland green
-    "hilly":   (0.38, 0.50, 0.28, 1.0),  # darker meadow green
-    "alpine":  (0.55, 0.55, 0.58, 1.0),  # rocky grey
-    "dunes":   (0.85, 0.72, 0.45, 1.0),  # sandy beige
+    "flat":    (0.54, 0.50, 0.42, 1.0),  # courtyard tile / prairie path, warm tan-grey
+    "rolling": (0.50, 0.58, 0.26, 1.0),  # Daylight Prairie chartreuse-sage grass
+    "hilly":   (0.34, 0.48, 0.24, 1.0),  # Hidden Forest understory, saturated green
+    "alpine":  (0.62, 0.58, 0.52, 1.0),  # Sanctuary peaks, warm sandstone-grey
+    "dunes":   (0.86, 0.74, 0.50, 1.0),  # Wasteland bleached sand, warm
 }
 
 

@@ -85,10 +85,20 @@ def _build_pine_skeleton(
     visually.
     """
     if trunk_archetype not in _TRUNK_ARCHETYPES:
-        raise ValueError(
-            f"unknown trunk_archetype {trunk_archetype!r}; "
-            f"valid: {_TRUNK_ARCHETYPES}"
+        # Lenient fallback rather than crash. Sonnet has been
+        # observed to hallucinate plausible-sounding archetype
+        # names despite the factories_guide brief listing the
+        # valid set; killing a 6-minute build over a one-line
+        # archetype typo wastes a generation. Substitute the
+        # canonical default and warn to stderr.
+        import sys
+        print(
+            f"[trunk_archetype] WARN: unknown trunk_archetype "
+            f"{trunk_archetype!r}; falling back to {_TRUNK_ARCHETYPES[0]!r}. "
+            f"Valid: {_TRUNK_ARCHETYPES}",
+            file=sys.stderr,
         )
+        trunk_archetype = _TRUNK_ARCHETYPES[0]
     # `no_branch` archetype: skip branch generation entirely.
     if trunk_archetype == "no_branch":
         n_branch_layers = 0
@@ -562,13 +572,31 @@ class NativeLowPolyTreeFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if archetype != "pine":
-            raise ValueError(f"unsupported archetype {archetype!r}; only 'pine' for now")
+            # Lenient fallback — only 'pine' is implemented but Sonnet
+            # may pick 'oak' / 'birch' / etc. Substitute and warn.
+            import sys
+            print(
+                f"[archetype] WARN: unsupported archetype {archetype!r}; "
+                f"falling back to 'pine' (only implemented archetype).",
+                file=sys.stderr,
+            )
+            archetype = "pine"
         self.archetype = archetype
         if trunk_archetype not in _TRUNK_ARCHETYPES:
-            raise ValueError(
-                f"unknown trunk_archetype {trunk_archetype!r}; "
-                f"valid: {_TRUNK_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[trunk_archetype] WARN: unknown trunk_archetype "
+                f"{trunk_archetype!r}; falling back to {_TRUNK_ARCHETYPES[0]!r}. "
+                f"Valid: {_TRUNK_ARCHETYPES}",
+                file=sys.stderr,
             )
+            trunk_archetype = _TRUNK_ARCHETYPES[0]
         self.trunk_archetype = trunk_archetype
         self.trunk_curve_amplitude = trunk_curve_amplitude
         self.trunk_height = trunk_height
@@ -591,10 +619,17 @@ class NativeLowPolyTreeFactory(AssetFactory):
         )
         self.crown_z_fraction = crown_z_fraction
         if foliage_archetype not in _FOLIAGE_BUILDERS:
-            raise ValueError(
-                f"unknown foliage_archetype {foliage_archetype!r}; valid: "
-                f"{list(_FOLIAGE_BUILDERS)}"
+            # Lenient fallback rather than crash — see other archetype
+            # validators in this package for the rationale.
+            import sys
+            _fallback = next(iter(_FOLIAGE_BUILDERS))
+            print(
+                f"[foliage_archetype] WARN: unknown foliage_archetype "
+                f"{foliage_archetype!r}; falling back to {_fallback!r}. "
+                f"Valid: {list(_FOLIAGE_BUILDERS)}",
+                file=sys.stderr,
             )
+            foliage_archetype = _fallback
         self.foliage_archetype = foliage_archetype
         self.foliage_layers = foliage_layers
         self.foliage_radius = foliage_radius

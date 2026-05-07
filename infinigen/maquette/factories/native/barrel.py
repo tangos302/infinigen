@@ -117,10 +117,20 @@ class LowPolyBarrelFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if barrel_archetype not in _BARREL_ARCHETYPES:
-            raise ValueError(
-                f"unknown barrel_archetype {barrel_archetype!r}; "
-                f"valid: {_BARREL_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[barrel_archetype] WARN: unknown barrel_archetype "
+                f"{barrel_archetype!r}; falling back to {_BARREL_ARCHETYPES[0]!r}. "
+                f"Valid: {_BARREL_ARCHETYPES}",
+                file=sys.stderr,
             )
+            barrel_archetype = _BARREL_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[barrel_archetype]
         self.barrel_archetype = barrel_archetype
         self.height = float(height if height is not None else d["height"])

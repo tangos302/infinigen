@@ -250,10 +250,20 @@ class LowPolyTombstoneFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if tombstone_archetype not in _TOMBSTONE_ARCHETYPES:
-            raise ValueError(
-                f"unknown tombstone_archetype {tombstone_archetype!r}; "
-                f"valid: {_TOMBSTONE_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[tombstone_archetype] WARN: unknown tombstone_archetype "
+                f"{tombstone_archetype!r}; falling back to {_TOMBSTONE_ARCHETYPES[0]!r}. "
+                f"Valid: {_TOMBSTONE_ARCHETYPES}",
+                file=sys.stderr,
             )
+            tombstone_archetype = _TOMBSTONE_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[tombstone_archetype]
         self.tombstone_archetype = tombstone_archetype
         self.height = float(height if height is not None else d["height"])

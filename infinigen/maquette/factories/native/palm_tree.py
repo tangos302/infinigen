@@ -264,10 +264,20 @@ class LowPolyPalmTreeFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if palm_archetype not in _PALM_ARCHETYPES:
-            raise ValueError(
-                f"unknown palm_archetype {palm_archetype!r}; "
-                f"valid: {_PALM_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[palm_archetype] WARN: unknown palm_archetype "
+                f"{palm_archetype!r}; falling back to {_PALM_ARCHETYPES[0]!r}. "
+                f"Valid: {_PALM_ARCHETYPES}",
+                file=sys.stderr,
             )
+            palm_archetype = _PALM_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[palm_archetype]
         self.palm_archetype = palm_archetype
         self.trunk_height = float(trunk_height if trunk_height is not None else d["trunk_height"])

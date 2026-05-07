@@ -208,10 +208,20 @@ class LowPolySuspensionBridgeFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if bridge_archetype not in _BRIDGE_ARCHETYPES:
-            raise ValueError(
-                f"unknown bridge_archetype {bridge_archetype!r}; "
-                f"valid: {_BRIDGE_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[bridge_archetype] WARN: unknown bridge_archetype "
+                f"{bridge_archetype!r}; falling back to {_BRIDGE_ARCHETYPES[0]!r}. "
+                f"Valid: {_BRIDGE_ARCHETYPES}",
+                file=sys.stderr,
             )
+            bridge_archetype = _BRIDGE_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[bridge_archetype]
         self.bridge_archetype = bridge_archetype
         self.length = float(length if length is not None else d["length"])

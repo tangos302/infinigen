@@ -98,10 +98,20 @@ class LowPolyHitchingPostFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if hitching_archetype not in _HITCHING_ARCHETYPES:
-            raise ValueError(
-                f"unknown hitching_archetype {hitching_archetype!r}; "
-                f"valid: {_HITCHING_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[hitching_archetype] WARN: unknown hitching_archetype "
+                f"{hitching_archetype!r}; falling back to {_HITCHING_ARCHETYPES[0]!r}. "
+                f"Valid: {_HITCHING_ARCHETYPES}",
+                file=sys.stderr,
             )
+            hitching_archetype = _HITCHING_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[hitching_archetype]
         self.hitching_archetype = hitching_archetype
         self.rail_length = float(rail_length if rail_length is not None else d["rail_length"])

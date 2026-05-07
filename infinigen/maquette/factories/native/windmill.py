@@ -325,10 +325,20 @@ class LowPolyWindmillFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if windmill_archetype not in _WINDMILL_ARCHETYPES:
-            raise ValueError(
-                f"unknown windmill_archetype {windmill_archetype!r}; "
-                f"valid: {_WINDMILL_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[windmill_archetype] WARN: unknown windmill_archetype "
+                f"{windmill_archetype!r}; falling back to {_WINDMILL_ARCHETYPES[0]!r}. "
+                f"Valid: {_WINDMILL_ARCHETYPES}",
+                file=sys.stderr,
             )
+            windmill_archetype = _WINDMILL_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[windmill_archetype]
         self.windmill_archetype = windmill_archetype
         self.tower_height = float(

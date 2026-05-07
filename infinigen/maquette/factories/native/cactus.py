@@ -342,10 +342,20 @@ class LowPolyCactusFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if cactus_archetype not in _CACTUS_ARCHETYPES:
-            raise ValueError(
-                f"unknown cactus_archetype {cactus_archetype!r}; "
-                f"valid: {_CACTUS_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[cactus_archetype] WARN: unknown cactus_archetype "
+                f"{cactus_archetype!r}; falling back to {_CACTUS_ARCHETYPES[0]!r}. "
+                f"Valid: {_CACTUS_ARCHETYPES}",
+                file=sys.stderr,
             )
+            cactus_archetype = _CACTUS_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[cactus_archetype]
         self.cactus_archetype = cactus_archetype
         self.height = float(height if height is not None else d["height"])

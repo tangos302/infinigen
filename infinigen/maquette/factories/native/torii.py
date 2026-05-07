@@ -140,10 +140,20 @@ class LowPolyToriiFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if torii_archetype not in _TORII_ARCHETYPES:
-            raise ValueError(
-                f"unknown torii_archetype {torii_archetype!r}; "
-                f"valid: {_TORII_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[torii_archetype] WARN: unknown torii_archetype "
+                f"{torii_archetype!r}; falling back to {_TORII_ARCHETYPES[0]!r}. "
+                f"Valid: {_TORII_ARCHETYPES}",
+                file=sys.stderr,
             )
+            torii_archetype = _TORII_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[torii_archetype]
         self.torii_archetype = torii_archetype
         self.height = float(height if height is not None else d["height"])

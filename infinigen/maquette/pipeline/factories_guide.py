@@ -445,29 +445,43 @@ from mathutils import Vector
 from infinigen.maquette.factories.native.<module> import LowPoly<X>Factory
 # ... repeat for each factory you need
 from infinigen.maquette.factories.boulder import LowPolyBoulderFactory  # wrapper
-from infinigen.maquette.runtime.terrain import make_terrain
-# OR — when the prompt mixes biomes (grass + desert, forest + coast, etc.):
+# DEFAULT: painterly Sky-CotL-style terrain (vertex-color biome bands,
+# half-Lambert directional shading, crest highlights, per-realm palette).
+# Use this unless the camera is far away or the ground is mostly hidden.
+from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
+# Fallback A — single-style flat-shaded ground (faster, lower quality):
+# from infinigen.maquette.runtime.terrain import make_terrain
+# Fallback B — multi-biome flat-shaded zones (hard color boundaries):
 # from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
-# OR — for SERIOUS terrain (dramatic peaks + river systems + image refs):
-# from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
 
 rng = random.Random(<seed>)
 
 # 1. Wipe scene + create displaced ground. NEVER build it as a bare plane.
 # Pick the helper that fits the prompt:
+#
+# DEFAULT: make_eroded_terrain — this is the painterly Sky-CotL-style
+#   terrain pipeline (vertex-color biome bands, half-Lambert directional
+#   shading, crest highlights, voronoi territorial drift, per-realm
+#   palette dispatch). Use this for ANY prompt that benefits from
+#   "painted by light" terrain coloring — i.e., almost everything other
+#   than a strict ground tile under hero buildings. See `palette_preset`
+#   for realm tuning (alpine/desert/wetland/volcanic/savanna/tundra/tropical).
+#
+# OTHERWISE:
 #   make_terrain(style=...)             — flat/rolling/hilly/alpine/dunes,
-#                                         single biome, fast.
-#   make_multi_biome_terrain(zones=...) — mixed biomes side-by-side,
-#                                         simple zone blender (faceted edges).
-#   make_eroded_terrain(peaks=, troughs=) — game-ready quality.
-#                                         Hydraulic erosion (landlab) +
-#                                         continuous biome colors.
-#                                         REQUIRED when the prompt names
-#                                         dramatic terrain (mountain ranges,
-#                                         river valleys, "vast plains with
-#                                         a peak in the distance"), or any
-#                                         time an image reference is provided
-#                                         showing complex relief.
+#                                         single biome, FLAT-SHADED (single
+#                                         Kd per zone, no per-vertex Lambert
+#                                         or crest). Use only when the
+#                                         camera will be far away or when
+#                                         the ground is mostly hidden under
+#                                         buildings — otherwise it reads as
+#                                         flatter and more generic than the
+#                                         eroded path.
+#   make_multi_biome_terrain(zones=...) — mixed biomes side-by-side, also
+#                                         flat-shaded. Same caveat as above.
+#                                         Pick this only when you need a
+#                                         hard zone boundary, not a blended
+#                                         biome transition.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
 terrain = make_terrain(
@@ -803,25 +817,34 @@ from infinigen.maquette.factories.native.wagon import LowPolyWagonFactory
 from infinigen.maquette.factories.native.barrel import LowPolyBarrelFactory
 from infinigen.maquette.factories.native.crate import LowPolyCrateFactory
 from infinigen.maquette.factories.native.haystack import LowPolyHaystackFactory
-from infinigen.maquette.runtime.terrain import make_terrain
-# OR — when the prompt mixes biomes (grass + desert, forest + coast):
+# DEFAULT terrain helper: painterly Sky-CotL look (per-realm palette,
+# half-Lambert, crest highlights). See low-poly guide for full recipe.
+from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
+# Fallback A — single-style flat-shaded ground:
+# from infinigen.maquette.runtime.terrain import make_terrain
+# Fallback B — multi-biome flat-shaded zones:
 # from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
-# OR — for SERIOUS terrain (dramatic peaks + river systems + image refs):
-# from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
 
 rng = random.Random(<seed>)
 
 # 1. Wipe scene + create displaced ground. NEVER build it as a bare plane.
+# Default to make_eroded_terrain — painterly Sky-CotL look. See low-poly
+# guide for the full peaks/troughs recipe; minimal example below.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
-terrain = make_terrain(
-    style="<flat|rolling|hilly|alpine|dunes>",
-    size=80,                                # half-width in BU; world 160 BU wide
-    base_color=(<R>, <G>, <B>, 1.0),
+terrain = make_eroded_terrain(
+    size=140,
     seed=<scene seed>,
+    peaks=[(60, 30, 22, 8.0), (-50, 60, 18, 4.5)],
+    troughs=[(-10, -10, 14, -3.2)],
+    plain_offset=2.4,
+    sea_level=0.5,
+    erode_iters=35,
+    palette_preset="<alpine|desert|wetland|volcanic|savanna|tundra|tropical>",
 )
-# Same multi-biome / eroded helpers are available — see low-poly guide
-# for parameter recipes. They are mode-agnostic.
+# If the prompt is a flat courtyard or buildings hide most of the
+# ground, the simpler `make_terrain(style=..., base_color=...)` works
+# too — it's flat-shaded so it lands generic but it's faster.
 
 # REALISTIC-MODE TERRAIN (when using make_eroded_terrain): turn on the
 # PBR shader + bake-for-export so the GLB ships actual textures

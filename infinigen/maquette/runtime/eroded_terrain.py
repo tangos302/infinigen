@@ -83,16 +83,32 @@ class Terrain:
 # Palette is **sRGB-intent** — these are the values you'd type into a
 # paint program. The vertex-color write step converts to linear via
 # ``_srgb_to_linear`` so they don't blow out under the Standard view
-# transform. Hand-tuned 2026-05-01 after the user noted blown-out
-# greens in test renders.
+# transform. Tuning history:
+#   2026-05-01: desaturated to fix blown-out greens under Cycles+Standard.
+#   2026-05-07: pushed back toward Sky CotL Daylight Prairie/Sanctuary —
+#               the May-1 muting was applied uniformly and made non-desert
+#               biomes feel "pre-Sky-CotL" generic. Saturation lifted on
+#               meadow/forest, stone made warmer, snow neutralised so it
+#               stops casting cool-blue, and shore tinted slightly
+#               peachier. The vertex-color path (browser viewer) is direct
+#               so these read on screen as authored — Cycles/Standard
+#               re-mapping was the only thing the May-1 mute was solving
+#               and the per-channel deltas here are still small enough not
+#               to clip.
 _DEFAULT_PALETTE: dict[str, PaletteRGB] = {
-    "lakebed": (0.46, 0.40, 0.30),    # damp earth, slight green tint
-    "shore":   (0.74, 0.66, 0.48),    # warm pale sand
-    "meadow":  (0.40, 0.50, 0.22),    # grass — desaturated a touch from the original
-    "forest":  (0.20, 0.30, 0.15),    # deeper, mossier forest
-    "stone":   (0.46, 0.42, 0.36),    # dry rock, slight ochre
-    "alpine":  (0.58, 0.56, 0.54),    # exposed alpine, near-neutral
-    "snow":    (0.86, 0.88, 0.92),    # off-white — Standard view will lift this to display white
+    # 2026-05-07 (third pass): user reports terrain still reads "realistic
+    # muted, not Sky CotL." The +0.05 channel bumps from earlier passes
+    # don't survive the Cycles+Standard render compression — what reads
+    # as "vibrant" in Sky CotL screenshots requires sRGB values that
+    # *look* over-saturated when authored, because the render pipeline
+    # eats most of the chroma. Pushed meadow/forest/stone HARD here.
+    "lakebed": (0.34, 0.38, 0.32),    # damp earth, slight cool wet tint
+    "shore":   (0.82, 0.68, 0.42),    # warm peach sand, more saturated
+    "meadow":  (0.50, 0.72, 0.20),    # vibrant chartreuse — was 0.42/0.60/0.30
+    "forest":  (0.16, 0.46, 0.20),    # deep emerald — was 0.20/0.42/0.24
+    "stone":   (0.62, 0.50, 0.32),    # warm sandstone — was 0.54/0.48/0.38
+    "alpine":  (0.70, 0.62, 0.52),    # warm grey rock — was 0.64/0.60/0.54
+    "snow":    (0.96, 0.94, 0.86),    # warm cream-white — was 0.92/0.92/0.90
 }
 
 # Named biome presets — the LLM picks one with ``palette_preset="..."``
@@ -114,49 +130,61 @@ _PALETTE_PRESETS: dict[str, dict[str, PaletteRGB]] = {
         "snow":    (0.92, 0.84, 0.62),  # bleached crest sand, no white
     },
     "wetland": {
-        "lakebed": (0.30, 0.34, 0.24),  # peat / muck
-        "shore":   (0.55, 0.55, 0.38),  # reedy bank
-        "meadow":  (0.32, 0.45, 0.20),  # grass marsh
-        "forest":  (0.18, 0.28, 0.16),  # bog forest
-        "stone":   (0.40, 0.42, 0.34),  # damp slate
-        "alpine":  (0.50, 0.52, 0.48),  # cool rock
-        "snow":    (0.82, 0.86, 0.88),
+        # Sky CotL Hidden Forest reference — moss-jade-emerald lowland with
+        # honey-gold light shafts through the canopy.
+        "lakebed": (0.22, 0.34, 0.30),  # jade pool, saturated green-teal
+        "shore":   (0.52, 0.56, 0.36),  # damp moss bank
+        "meadow":  (0.36, 0.52, 0.24),  # vibrant fern floor
+        "forest":  (0.18, 0.36, 0.20),  # deep saturated emerald
+        "stone":   (0.42, 0.44, 0.34),  # damp greenish slate
+        "alpine":  (0.54, 0.58, 0.52),  # cool damp rock
+        "snow":    (0.86, 0.90, 0.90),  # rare; soft cream-blue
     },
     "volcanic": {
-        "lakebed": (0.18, 0.16, 0.16),  # dark obsidian basin
-        "shore":   (0.30, 0.26, 0.24),  # cooled lava sand
-        "meadow":  (0.26, 0.22, 0.20),  # ash plain
-        "forest":  (0.16, 0.18, 0.16),  # sparse charred scrub
-        "stone":   (0.34, 0.28, 0.24),  # basalt
-        "alpine":  (0.38, 0.30, 0.26),  # weathered rock
-        "snow":    (0.62, 0.58, 0.55),  # ash dust, not white
+        # Sky CotL Wasteland Battlefield / Eye of Eden reference — charcoal
+        # obsidian with ember-orange accents and deep slate-purple shadow.
+        "lakebed": (0.14, 0.10, 0.12),  # obsidian / cooled magma pool
+        "shore":   (0.28, 0.22, 0.20),  # cooled lava sand
+        "meadow":  (0.24, 0.20, 0.18),  # ash plain
+        "forest":  (0.15, 0.16, 0.14),  # sparse charred scrub
+        "stone":   (0.36, 0.28, 0.22),  # basalt with rust hint
+        "alpine":  (0.42, 0.32, 0.26),  # weathered, ember undertone
+        "snow":    (0.66, 0.56, 0.48),  # warm ash dust, never white
     },
     "savanna": {
-        "lakebed": (0.42, 0.34, 0.22),  # dry watering hole
-        "shore":   (0.78, 0.68, 0.40),  # dusty pale earth
-        "meadow":  (0.62, 0.58, 0.30),  # tall yellow-green grass
-        "forest":  (0.36, 0.44, 0.20),  # acacia scrub
-        "stone":   (0.55, 0.46, 0.34),
-        "alpine":  (0.62, 0.54, 0.42),
-        "snow":    (0.88, 0.80, 0.62),  # bleached crest, never white
+        # Sky CotL Treasure Reef / Aviary midday reference — bleached coral
+        # gold under bright sun, warm tan shadows (not blue).
+        "lakebed": (0.46, 0.38, 0.26),  # dry watering hole
+        "shore":   (0.82, 0.70, 0.42),  # bright bleached sand
+        "meadow":  (0.66, 0.62, 0.32),  # tall yellow grass, saturated
+        "forest":  (0.40, 0.48, 0.22),  # acacia scrub, brighter
+        "stone":   (0.60, 0.50, 0.36),  # warm tan stone
+        "alpine":  (0.68, 0.58, 0.44),  # warmer crest
+        "snow":    (0.92, 0.84, 0.66),  # cream-gold crest, never white
     },
     "tundra": {
-        "lakebed": (0.40, 0.42, 0.42),  # cold meltwater pool
-        "shore":   (0.58, 0.60, 0.58),  # frostbitten earth
-        "meadow":  (0.42, 0.46, 0.36),  # moss + low grass
-        "forest":  (0.24, 0.30, 0.22),  # taiga
-        "stone":   (0.48, 0.48, 0.48),
-        "alpine":  (0.62, 0.64, 0.66),  # cold rock
-        "snow":    (0.92, 0.94, 0.96),
+        # Sky CotL Sanctuary peaks / Aviary cloud-edge reference — pale
+        # white-blue with hints of warm cream lit areas; pale lavender
+        # shadow, not the hard cold-overcast blue the previous tuning had.
+        "lakebed": (0.38, 0.44, 0.46),  # cold meltwater, slight blue
+        "shore":   (0.60, 0.62, 0.58),  # frostbitten earth
+        "meadow":  (0.46, 0.50, 0.38),  # lichen + low grass
+        "forest":  (0.26, 0.32, 0.24),  # taiga, slight saturation bump
+        "stone":   (0.50, 0.50, 0.52),  # cool slate
+        "alpine":  (0.66, 0.68, 0.70),  # cold rock, slight blue
+        "snow":    (0.94, 0.96, 0.98),  # crisp snow
     },
     "tropical": {
-        "lakebed": (0.20, 0.36, 0.30),  # turquoise lagoon floor
-        "shore":   (0.92, 0.88, 0.72),  # white coral sand
-        "meadow":  (0.30, 0.52, 0.22),  # lush jungle floor
-        "forest":  (0.16, 0.36, 0.16),  # deep canopy
-        "stone":   (0.50, 0.44, 0.34),  # warm volcanic-tropical rock
-        "alpine":  (0.62, 0.58, 0.52),
-        "snow":    (0.82, 0.86, 0.84),
+        # Sky CotL Hidden Forest sunlit clearing / Aviary lagoon reference
+        # — vibrant cyan lagoon + lush emerald jungle + white coral sand
+        # under bright lemon-gold midday.
+        "lakebed": (0.22, 0.42, 0.36),  # bright turquoise lagoon floor
+        "shore":   (0.94, 0.90, 0.74),  # white coral sand
+        "meadow":  (0.34, 0.56, 0.24),  # lush jungle floor, more saturated
+        "forest":  (0.18, 0.40, 0.18),  # deep saturated canopy
+        "stone":   (0.54, 0.46, 0.34),  # warm volcanic-tropical rock
+        "alpine":  (0.66, 0.60, 0.52),
+        "snow":    (0.86, 0.88, 0.84),
     },
 }
 
@@ -940,25 +968,45 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
         cool_shadow = np.array([0.92, 0.88, 0.82], dtype=np.float32)
         warm_lit    = np.array([1.06, 1.02, 0.94], dtype=np.float32)
     elif palette_name == "tropical":
-        cool_shadow = np.array([0.72, 0.86, 0.92], dtype=np.float32)  # cool aqua shadow
-        warm_lit    = np.array([1.10, 1.04, 0.85], dtype=np.float32)  # bright lemon
+        # Sky CotL lagoon — saturated aqua-cyan shadow, bright lemon-gold lit.
+        cool_shadow = np.array([0.68, 0.86, 0.94], dtype=np.float32)
+        warm_lit    = np.array([1.14, 1.08, 0.84], dtype=np.float32)
     elif palette_name == "volcanic":
-        cool_shadow = np.array([0.62, 0.68, 0.78], dtype=np.float32)  # slate-purple
-        warm_lit    = np.array([1.18, 1.00, 0.85], dtype=np.float32)  # ember orange
+        # Sky CotL Eden — deeper slate-purple shadow, punchier ember-orange lit.
+        # Wider tint range than other presets because volcanic *should* read
+        # high-contrast (firelight + dark stone is the whole story).
+        cool_shadow = np.array([0.55, 0.62, 0.78], dtype=np.float32)
+        warm_lit    = np.array([1.22, 1.04, 0.82], dtype=np.float32)
     elif palette_name == "savanna":
-        cool_shadow = np.array([0.78, 0.82, 0.92], dtype=np.float32)
-        warm_lit    = np.array([1.14, 1.04, 0.78], dtype=np.float32)
+        # Sky CotL Treasure Reef midday — warm tan shadow (not blue), punchy
+        # gold lit. Cool-blue shadows on golden grass read as overcast and
+        # killed the bright-savanna feel; lifted shadow saturation/warmth.
+        cool_shadow = np.array([0.84, 0.86, 0.92], dtype=np.float32)
+        warm_lit    = np.array([1.18, 1.06, 0.74], dtype=np.float32)
     elif palette_name == "wetland":
-        cool_shadow = np.array([0.74, 0.84, 0.85], dtype=np.float32)  # cool damp-green
-        warm_lit    = np.array([1.10, 1.06, 0.92], dtype=np.float32)
+        # Sky CotL Hidden Forest — damp green-teal shadow, honey-gold lit
+        # (the dappled-canopy sunbeam look). Slightly warmer green tint
+        # than the previous flat 'cool damp-green' so lit moss reads as
+        # sun-warmed, not just brighter.
+        cool_shadow = np.array([0.70, 0.84, 0.82], dtype=np.float32)
+        warm_lit    = np.array([1.16, 1.08, 0.84], dtype=np.float32)
     elif palette_name == "tundra":
-        cool_shadow = np.array([0.68, 0.78, 0.96], dtype=np.float32)  # cold blue-shadow
-        warm_lit    = np.array([1.06, 1.02, 0.96], dtype=np.float32)  # pale gold
+        # Sky CotL Sanctuary peaks / Aviary cloud-edge — pale lavender-blue
+        # shadow (not hard cold blue), warm cream-gold lit. The previous
+        # (0.68, 0.78, 0.96) was full-overcast cold and made every tundra
+        # render look dead-grey; this lifts shadow warmth toward lavender.
+        cool_shadow = np.array([0.74, 0.78, 0.94], dtype=np.float32)
+        warm_lit    = np.array([1.10, 1.04, 0.94], dtype=np.float32)
     else:
         # alpine / default — Sky CotL Daylight Prairie / Sanctuary look.
-        # Cool-blue desaturated shadows, warm-amber lit areas.
-        cool_shadow = np.array([0.68, 0.78, 0.95], dtype=np.float32)
-        warm_lit    = np.array([1.12, 1.04, 0.88], dtype=np.float32)
+        # 2026-05-07 (third pass): widened Lambert delta so shadow / lit
+        # contrast reads as the signature Sky CotL "painted by light"
+        # gradient, not a flat overcast. Shadow side gets an aqua-teal
+        # cast (the saturated cool the prairie palette needs to NOT look
+        # generic), lit side gets a warm gold without crushing blue
+        # below 0.92 (preserves grass green).
+        cool_shadow = np.array([0.70, 0.86, 0.96], dtype=np.float32)
+        warm_lit    = np.array([1.18, 1.08, 0.92], dtype=np.float32)
     tint = (
         cool_shadow[None, None, :] * (1.0 - half[..., None])
         + warm_lit[None, None, :] * half[..., None]
@@ -972,6 +1020,11 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
     # +18 % red / +10 % green / -5 % blue on the crest mask.
     # SKIPPED on dunes — every dune sinusoid ridge becomes a visible
     # warm stripe, which turns the unified sand into a banded pattern.
+    # GATED BY ELEVATION — applied only to rock/alpine bands (z_norm
+    # > 0.45). Grass meadows shouldn't have warm rim accents (in
+    # reference photography Sky's prairie has flat lit/shadow grass, no
+    # crest highlights — those read as "rock catching sun"); applying
+    # warm_rim uniformly was yellowing lit meadow ridges into olive.
     if not dunes:
         try:
             from scipy.ndimage import gaussian_laplace
@@ -979,6 +1032,13 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
             max_pos = max(float(crest.max()), 1e-3)
             crest = np.clip(crest / max_pos, 0, 1)
             crest = crest * crest  # square so only sharpest ridges hit
+            # Elevation gate: ramp from 0 at z_norm=0.45 to 1 at z_norm=0.7.
+            z_lo, z_hi = float(elev.min()), float(elev.max())
+            if z_hi - z_lo > 1e-3:
+                z_norm = ((elev - z_lo) / (z_hi - z_lo)).astype(np.float32)
+                rock_gate = np.clip((z_norm - 0.45) / 0.25, 0.0, 1.0)
+                rock_gate = rock_gate * rock_gate * (3.0 - 2.0 * rock_gate)
+                crest = crest * rock_gate
             warm_rim = np.array([1.18, 1.10, 0.95], dtype=np.float32)
             out_warm = out * warm_rim[None, None, :]
             m = crest[..., None]
@@ -1493,15 +1553,15 @@ def _place_explicit_water(
     i = int(np.clip(round(fi), 0, res_minus))
     j = int(np.clip(round(fj), 0, res_minus))
 
-    # Water surface sits in the bowl — proportional to basin depth so a
-    # shallow basin doesn't push the water above the rim. A fixed +0.6
-    # offset worked for ≥2 BU basins, but on a 0.65 BU basin the surface
-    # ended up flush with surrounding terrain and the pool read as a
-    # painted disc on flat sand. Lift to ~35 % of basin depth above
-    # the deepest cell, capped at 0.6 BU so deep basins still get a
-    # visible water column above the floor.
+    # Water surface position: ~95 % of basin depth above the floor so
+    # the water sheet nearly fills the basin to the rim. Earlier tunings
+    # used `min(0.35 * depth, 0.6)` which left ~1 BU of exposed crater
+    # wall on deep basins. Combined with `apply_composition`'s rim
+    # plateau at center+0.15*depth, the rim-to-water gap is ~0.20*depth
+    # — small enough that the water reads as filling the basin instead
+    # of as a tiny pond in a big bowl.
     basin_floor_z = float(H[j, i])
-    water_z = basin_floor_z + min(0.35 * max(depth_w, 0.0), 0.6)
+    water_z = basin_floor_z + 0.95 * max(depth_w, 0.0)
 
     # Footprint mask: cells within radius_w (in world BU) of the water
     # center. Convert world radius to grid cells.

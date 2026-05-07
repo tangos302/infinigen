@@ -266,10 +266,20 @@ class LowPolyWellFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if well_archetype not in _WELL_ARCHETYPES:
-            raise ValueError(
-                f"unknown well_archetype {well_archetype!r}; "
-                f"valid: {_WELL_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[well_archetype] WARN: unknown well_archetype "
+                f"{well_archetype!r}; falling back to {_WELL_ARCHETYPES[0]!r}. "
+                f"Valid: {_WELL_ARCHETYPES}",
+                file=sys.stderr,
             )
+            well_archetype = _WELL_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[well_archetype]
         self.well_archetype = well_archetype
         self.radius = float(radius if radius is not None else d["radius"])

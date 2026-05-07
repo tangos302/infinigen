@@ -265,10 +265,20 @@ class LowPolyLanternPostFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if lantern_archetype not in _LANTERN_ARCHETYPES:
-            raise ValueError(
-                f"unknown lantern_archetype {lantern_archetype!r}; "
-                f"valid: {_LANTERN_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[lantern_archetype] WARN: unknown lantern_archetype "
+                f"{lantern_archetype!r}; falling back to {_LANTERN_ARCHETYPES[0]!r}. "
+                f"Valid: {_LANTERN_ARCHETYPES}",
+                file=sys.stderr,
             )
+            lantern_archetype = _LANTERN_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[lantern_archetype]
         self.lantern_archetype = lantern_archetype
         self.post_height = float(post_height if post_height is not None else d["post_height"])
@@ -278,10 +288,17 @@ class LowPolyLanternPostFactory(AssetFactory):
         self.lamp_size = float(lamp_size if lamp_size is not None else d["lamp_size"])
         self.lamp_archetype = lamp_archetype or d["lamp_archetype"]
         if self.lamp_archetype not in _LAMP_BUILDERS:
-            raise ValueError(
-                f"unknown lamp_archetype {self.lamp_archetype!r}; "
-                f"valid: {list(_LAMP_BUILDERS)}"
+            # Lenient fallback rather than crash — see other archetype
+            # validators in this package for the rationale.
+            import sys
+            _fallback = next(iter(_LAMP_BUILDERS))
+            print(
+                f"[lamp_archetype] WARN: unknown lamp_archetype "
+                f"{self.lamp_archetype!r}; falling back to {_fallback!r}. "
+                f"Valid: {list(_LAMP_BUILDERS)}",
+                file=sys.stderr,
             )
+            self.lamp_archetype = _fallback
         self.post_color = post_color or d["post_color"]
         self.lamp_color = lamp_color or d["lamp_color"]
 

@@ -873,13 +873,14 @@ def _scene_brief_block(map_size: str) -> str:
     """Hero count + path requirements injected as a 'scene brief'.
 
     Hero count maps directly off ``map_size``: small = 1, medium = 2,
-    large = 3. The path requirement is unconditional — the scene must
-    feel walkable to a player — unless the user prompt explicitly says
-    otherwise (e.g. "wild untouched valley"). Claude is told to read
-    the prompt for that opt-out.
+    large = 3, xl = 5 (XL is also 2× the world size of L; see the xl
+    branch below). The path requirement is unconditional — the scene
+    must feel walkable to a player — unless the user prompt explicitly
+    says otherwise (e.g. "wild untouched valley"). Claude is told to
+    read the prompt for that opt-out.
     """
     size = (map_size or "large").strip().lower()
-    hero_count = {"small": 1, "medium": 2, "large": 3, "xl": 4}.get(size, 3)
+    hero_count = {"small": 1, "medium": 2, "large": 3, "xl": 5}.get(size, 3)
     if hero_count == 1:
         hero_phrasing = (
             "exactly **one hero landmark** — a single major structure or "
@@ -929,16 +930,20 @@ def _scene_brief_block(map_size: str) -> str:
             "so target Z is sampled correctly. Don't pass `lens_mm` — "
             "35 mm default is right for 3-hero scenes."
         )
-    else:  # xl, future
+    else:  # xl
         hero_phrasing = (
-            "**four+ hero landmarks** — one primary plus three or more "
-            "supporting landmarks scattered across the map. Treat the "
+            "**five hero landmarks** — one **primary** plus **four "
+            "supporting** landmarks scattered across the map. Treat the "
             "scene as a small region with multiple settlements / vistas. "
-            "Tag each in comments: `# HERO: primary — ...`, "
-            "`# HERO: supporting — ...`. All heroes occupy distinct "
-            "quadrants, pairwise XY distance ≥ 16 BU. Camera is "
-            "auto-placed via `place_scene_camera(composition, "
-            "terrain_size=80, terrain=terrain, lens_mm=24)`."
+            "Tag each in comments: `# HERO: primary — ...` (×1), "
+            "`# HERO: supporting — ...` (×4). All five heroes occupy "
+            "distinct sectors of the map, pairwise XY distance ≥ 22 BU "
+            "(distances scale with the larger world).\n\n"
+            "**XL world size:** the map is 2× the standard L size. Use "
+            "`size=160` for `make_eroded_terrain` (world is 320 BU "
+            "wide; the size kwarg is a half-width). Camera is auto-"
+            "placed via `place_scene_camera(composition, "
+            "terrain_size=160, terrain=terrain, lens_mm=24)`."
         )
 
     # Quadrant table — appears once per brief regardless of hero count.

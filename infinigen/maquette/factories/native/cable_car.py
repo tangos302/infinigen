@@ -284,10 +284,20 @@ class LowPolyCableCarFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if cable_car_archetype not in _CABLE_CAR_ARCHETYPES:
-            raise ValueError(
-                f"unknown cable_car_archetype {cable_car_archetype!r}; "
-                f"valid: {_CABLE_CAR_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[cable_car_archetype] WARN: unknown cable_car_archetype "
+                f"{cable_car_archetype!r}; falling back to {_CABLE_CAR_ARCHETYPES[0]!r}. "
+                f"Valid: {_CABLE_CAR_ARCHETYPES}",
+                file=sys.stderr,
             )
+            cable_car_archetype = _CABLE_CAR_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[cable_car_archetype]
         self.cable_car_archetype = cable_car_archetype
         self.cabin_length = float(

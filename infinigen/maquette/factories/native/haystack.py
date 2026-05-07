@@ -228,10 +228,20 @@ class LowPolyHaystackFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if haystack_archetype not in _HAYSTACK_ARCHETYPES:
-            raise ValueError(
-                f"unknown haystack_archetype {haystack_archetype!r}; "
-                f"valid: {_HAYSTACK_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[haystack_archetype] WARN: unknown haystack_archetype "
+                f"{haystack_archetype!r}; falling back to {_HAYSTACK_ARCHETYPES[0]!r}. "
+                f"Valid: {_HAYSTACK_ARCHETYPES}",
+                file=sys.stderr,
             )
+            haystack_archetype = _HAYSTACK_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[haystack_archetype]
         self.haystack_archetype = haystack_archetype
         self.height = float(height if height is not None else d["height"])

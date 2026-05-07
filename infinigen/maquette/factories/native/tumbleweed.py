@@ -171,10 +171,20 @@ class LowPolyTumbleweedFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if tumbleweed_archetype not in _TUMBLEWEED_ARCHETYPES:
-            raise ValueError(
-                f"unknown tumbleweed_archetype {tumbleweed_archetype!r}; "
-                f"valid: {_TUMBLEWEED_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[tumbleweed_archetype] WARN: unknown tumbleweed_archetype "
+                f"{tumbleweed_archetype!r}; falling back to {_TUMBLEWEED_ARCHETYPES[0]!r}. "
+                f"Valid: {_TUMBLEWEED_ARCHETYPES}",
+                file=sys.stderr,
             )
+            tumbleweed_archetype = _TUMBLEWEED_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[tumbleweed_archetype]
         self.tumbleweed_archetype = tumbleweed_archetype
         self.radius = float(radius if radius is not None else d["radius"])

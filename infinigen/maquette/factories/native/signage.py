@@ -117,10 +117,20 @@ class LowPolySignageFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if signage_archetype not in _SIGNAGE_ARCHETYPES:
-            raise ValueError(
-                f"unknown signage_archetype {signage_archetype!r}; "
-                f"valid: {_SIGNAGE_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[signage_archetype] WARN: unknown signage_archetype "
+                f"{signage_archetype!r}; falling back to {_SIGNAGE_ARCHETYPES[0]!r}. "
+                f"Valid: {_SIGNAGE_ARCHETYPES}",
+                file=sys.stderr,
             )
+            signage_archetype = _SIGNAGE_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[signage_archetype]
         self.signage_archetype = signage_archetype
         self.post_height = float(post_height if post_height is not None else d["post_height"])

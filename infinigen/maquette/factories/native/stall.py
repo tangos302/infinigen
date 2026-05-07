@@ -174,10 +174,20 @@ class LowPolyStallFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if stall_archetype not in _STALL_ARCHETYPES:
-            raise ValueError(
-                f"unknown stall_archetype {stall_archetype!r}; "
-                f"valid: {_STALL_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[stall_archetype] WARN: unknown stall_archetype "
+                f"{stall_archetype!r}; falling back to {_STALL_ARCHETYPES[0]!r}. "
+                f"Valid: {_STALL_ARCHETYPES}",
+                file=sys.stderr,
             )
+            stall_archetype = _STALL_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[stall_archetype]
         self.stall_archetype = stall_archetype
         self.length = float(length if length is not None else d["length"])

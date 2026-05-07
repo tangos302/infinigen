@@ -293,10 +293,20 @@ class LowPolyFenceFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if fence_archetype not in _FENCE_ARCHETYPES:
-            raise ValueError(
-                f"unknown fence_archetype {fence_archetype!r}; "
-                f"valid: {_FENCE_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[fence_archetype] WARN: unknown fence_archetype "
+                f"{fence_archetype!r}; falling back to {_FENCE_ARCHETYPES[0]!r}. "
+                f"Valid: {_FENCE_ARCHETYPES}",
+                file=sys.stderr,
             )
+            fence_archetype = _FENCE_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[fence_archetype]
         self.fence_archetype = fence_archetype
         self.length = float(length if length is not None else d["length"])

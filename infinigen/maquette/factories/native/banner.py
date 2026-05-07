@@ -180,10 +180,20 @@ class LowPolyBannerFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if banner_archetype not in _BANNER_ARCHETYPES:
-            raise ValueError(
-                f"unknown banner_archetype {banner_archetype!r}; "
-                f"valid: {_BANNER_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[banner_archetype] WARN: unknown banner_archetype "
+                f"{banner_archetype!r}; falling back to {_BANNER_ARCHETYPES[0]!r}. "
+                f"Valid: {_BANNER_ARCHETYPES}",
+                file=sys.stderr,
             )
+            banner_archetype = _BANNER_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[banner_archetype]
         self.banner_archetype = banner_archetype
         self.length = float(length if length is not None else d["length"])

@@ -249,10 +249,20 @@ class LowPolyWagonFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if wagon_archetype not in _WAGON_ARCHETYPES:
-            raise ValueError(
-                f"unknown wagon_archetype {wagon_archetype!r}; "
-                f"valid: {_WAGON_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[wagon_archetype] WARN: unknown wagon_archetype "
+                f"{wagon_archetype!r}; falling back to {_WAGON_ARCHETYPES[0]!r}. "
+                f"Valid: {_WAGON_ARCHETYPES}",
+                file=sys.stderr,
             )
+            wagon_archetype = _WAGON_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[wagon_archetype]
         self.wagon_archetype = wagon_archetype
         self.length = float(length if length is not None else d["length"])

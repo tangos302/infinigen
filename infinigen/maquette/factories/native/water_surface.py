@@ -176,10 +176,20 @@ class LowPolyWaterSurfaceFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if water_archetype not in _WATER_ARCHETYPES:
-            raise ValueError(
-                f"unknown water_archetype {water_archetype!r}; "
-                f"valid: {_WATER_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[water_archetype] WARN: unknown water_archetype "
+                f"{water_archetype!r}; falling back to {_WATER_ARCHETYPES[0]!r}. "
+                f"Valid: {_WATER_ARCHETYPES}",
+                file=sys.stderr,
             )
+            water_archetype = _WATER_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[water_archetype]
         self.water_archetype = water_archetype
         # Resolve extent vs length/width depending on archetype.

@@ -457,16 +457,63 @@ def ridge_along(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
 
 def basin_radial(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
                  cx: float, cy: float, radius: float,
-                 depth: float = 0.4) -> np.ndarray:
+                 depth: float = 0.4,
+                 rim_target_z: float | None = None,
+                 rim_band: float = 0.4) -> np.ndarray:
     """Carve a rounded basin centered at ``(cx, cy)``.
 
     Basin floor is ``depth`` BU below the natural terrain at the center,
     rising along a half-cosine to meet the surrounding surface at
     ``radius``. Useful for oasis pools, lake basins, courtyard plazas.
+
+    ``rim_target_z`` (world Z, BU): if not None, LIFT-TO-TARGET an
+    annulus around the basin so it forms a uniform plateau at exactly
+    ``rim_target_z``. The rim spans ``radius`` < d < ``radius * (1 +
+    rim_band)`` and any cells in this band BELOW the target are pushed
+    UP to it (cells already higher are untouched). Smoothstep blends
+    from full target at d=radius to natural terrain at the outer
+    annulus edge. This converts a basin-in-a-valley (open shape) into
+    a basin-with-uniform-walls (closed crater) — what the user reads
+    as "water surrounded by the same higher altitude on all sides."
+
+    2026-05-07: switched from additive ``rim_lift`` (which produced
+    disparate rim heights when the surrounding terrain itself varied)
+    to absolute ``rim_target_z`` lift-to-target so the plateau ring
+    is geometrically uniform.
     """
-    d = np.hypot(X - cx, Y - cy) / max(float(radius), 1e-6)
-    w = np.where(d < 1.0, 0.5 * (1.0 + np.cos(np.pi * d)), 0.0).astype(np.float32)
-    return (H - float(depth) * w).astype(np.float32)
+    d_norm = np.hypot(X - cx, Y - cy) / max(float(radius), 1e-6)
+    # Basin core (d < 1).
+    w_core = np.where(d_norm < 1.0,
+                      0.5 * (1.0 + np.cos(np.pi * d_norm)), 0.0).astype(np.float32)
+    H_out = H - float(depth) * w_core
+
+    # Rim plateau annulus (1 ≤ d < 1 + rim_band) — lift floor to target.
+    # Math: define a per-cell minimum Z that ramps from `target_z` at
+    # d=1 (right at the basin edge) down to a value low enough that
+    # `max(H, min_z)` is a no-op past d=outer. Use a smoothstep on the
+    # min_z itself, *not* a blend with H — that way every cell in the
+    # ring gets at least its share of the plateau, and natural terrain
+    # variation outside the ring is preserved by the max(H, min_z) =>
+    # max(H, very_negative) = H pattern.
+    if rim_target_z is not None and rim_band > 0.0:
+        outer = 1.0 + float(rim_band)
+        rim_t = np.clip((outer - d_norm) / float(rim_band), 0.0, 1.0)
+        rim_t = np.where((d_norm >= 1.0) & (d_norm < outer), rim_t, 0.0)
+        rim_t = (rim_t * rim_t * (3.0 - 2.0 * rim_t)).astype(np.float32)
+        # min_z: target_z scaled by the rim weight. Cells outside the
+        # ring (rim_t == 0) get min_z = 0, but for those we also want
+        # max(H, 0) to be a no-op when natural terrain is below 0; so
+        # subtract a large constant where rim_t is 0 to deactivate the
+        # max comparison.
+        VERY_NEG = -1e6
+        min_z = np.where(
+            rim_t > 0.0,
+            float(rim_target_z) * rim_t,
+            VERY_NEG,
+        ).astype(np.float32)
+        H_out = np.maximum(H_out, min_z).astype(np.float32)
+
+    return H_out.astype(np.float32)
 
 
 def clamp_above(H: np.ndarray, mask: np.ndarray, min_z: float) -> np.ndarray:
@@ -685,6 +732,22 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
             j = int(np.clip(round(fj), 0, res - 1))
             return float(H_out[j, i])
 
+        # Water-conflict prep: if comp.water is authored, paths whose
+        # waypoints pass through the water radius would carve a trench
+        # through the basin's plateau rim. Filter each path's waypoints
+        # to those outside the water+plateau radius so paths approach
+        # the water rim but don't cut into it.
+        water_keepout_r = None
+        water_cx = water_cy = 0.0
+        if comp.water is not None:
+            water_cx = float(comp.water.cx)
+            water_cy = float(comp.water.cy)
+            # Keepout = water radius + plateau ring (basin_radial uses
+            # rim_band=0.45 so plateau extends to radius * 1.45). Add a
+            # small 1.5 BU buffer so paths approach the rim but don't
+            # touch it.
+            water_keepout_r = float(comp.water.radius) * 1.45 + 1.5
+
         for path_idx, path in enumerate(comp.paths):
             # Zero-depth path → colour-only band (apply_path_tint paints
             # the corridor; no height carving). Sky paths are visible
@@ -693,20 +756,40 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
             # geometric no-op.
             if abs(float(path.depth)) < 1e-4:
                 continue
-            # Resample with centripetal Catmull-Rom + binormal jitter so
-            # straight LLM polylines bend organically. Stone roads stay
-            # rigid (Romans graded their roads) — no jitter for stone.
-            jitter = 0.0 if path.archetype == "stone" else 0.45
-            smoothed = _resample_catmull(
-                path.waypoints,
-                samples_per_segment=12,
-                jitter=jitter,
-                seed=path_idx * 7919 + 13,
-            )
-            H_out = valley_along(H_out, X, Y, smoothed,
-                                 width=path.width, depth=path.depth,
-                                 blend=path.blend,
-                                 base_height_at=_sample_h)
+            # Truncate waypoints inside the water keepout circle. The
+            # simplest correct behavior: drop in-circle waypoints. If
+            # the surviving waypoints split into disjoint runs (path
+            # entered then exited the water disc), each run becomes
+            # its own carved segment; runs of length 1 are dropped.
+            if water_keepout_r is not None:
+                runs: list[list[tuple[float, float]]] = [[]]
+                for (px, py) in path.waypoints:
+                    dx = float(px) - water_cx
+                    dy = float(py) - water_cy
+                    if (dx * dx + dy * dy) <= water_keepout_r * water_keepout_r:
+                        if runs[-1]:
+                            runs.append([])
+                        continue
+                    runs[-1].append((float(px), float(py)))
+                runs = [r for r in runs if len(r) >= 2]
+            else:
+                runs = [list(path.waypoints)]
+
+            for run_idx, run_waypoints in enumerate(runs):
+                # Resample with centripetal Catmull-Rom + binormal jitter so
+                # straight LLM polylines bend organically. Stone roads stay
+                # rigid (Romans graded their roads) — no jitter for stone.
+                jitter = 0.0 if path.archetype == "stone" else 0.45
+                smoothed = _resample_catmull(
+                    run_waypoints,
+                    samples_per_segment=12,
+                    jitter=jitter,
+                    seed=path_idx * 7919 + 13 + run_idx * 31,
+                )
+                H_out = valley_along(H_out, X, Y, smoothed,
+                                     width=path.width, depth=path.depth,
+                                     blend=path.blend,
+                                     base_height_at=_sample_h)
     if comp.water is not None:
         w = comp.water
         # Clamp basin depth to a minimum so shallow LLM picks (e.g.
@@ -715,7 +798,34 @@ def apply_composition(H: np.ndarray, X: np.ndarray, Y: np.ndarray,
         # basins push the water surface flush with surrounding terrain
         # and read as a painted disc instead of a pool.
         depth = max(float(w.depth), 1.5)
-        H_out = basin_radial(H_out, X, Y, w.cx, w.cy, w.radius, depth)
+        # Compute a UNIFORM rim plateau target Z. Sample the natural
+        # terrain at the basin center (the original undisturbed height
+        # before basin carve — H_out at this point already had ridges,
+        # heroes, mesas, cliffs, paths applied; we sample BEFORE the
+        # basin carve modifies cells inside the radius).
+        # Target = pre-carve center elevation + small lift so the rim
+        # always sits above the surrounding ambient terrain.
+        # The rim ring becomes a flat plateau at `rim_target_z` —
+        # geometrically uniform, regardless of how varied the ambient
+        # terrain was around the basin.
+        res = H_out.shape[0]
+        half = float((np.max(X) - np.min(X)) * 0.5)
+        cx_idx = int(np.clip(round((float(w.cx) + half) / (2.0 * half) * (res - 1)), 0, res - 1))
+        cy_idx = int(np.clip(round((float(w.cy) + half) / (2.0 * half) * (res - 1)), 0, res - 1))
+        center_z = float(H_out[cy_idx, cx_idx])
+        # Lift the rim 15 % of basin depth above pre-carve terrain
+        # (creates a SMALL visible plateau wall — the user's complaint
+        # about earlier passes was the rim was too high relative to
+        # the water mesh, making the water look like a tiny pond in a
+        # big crater). With water_z later placed at 95 % of basin
+        # depth above floor, the rim-to-water gap is ~0.20 * depth —
+        # ~0.5 BU on a 2.5 BU basin, ~0.3 BU on a 1.5 BU pool. Visible
+        # walkable plateau ring without dwarfing the water sheet.
+        rim_target_z = center_z + 0.15 * depth
+        H_out = basin_radial(
+            H_out, X, Y, w.cx, w.cy, w.radius, depth,
+            rim_target_z=rim_target_z, rim_band=0.45,
+        )
     return H_out
 
 

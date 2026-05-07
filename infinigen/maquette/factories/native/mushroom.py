@@ -189,10 +189,20 @@ class LowPolyMushroomFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if mushroom_archetype not in _MUSHROOM_ARCHETYPES:
-            raise ValueError(
-                f"unknown mushroom_archetype {mushroom_archetype!r}; "
-                f"valid: {_MUSHROOM_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[mushroom_archetype] WARN: unknown mushroom_archetype "
+                f"{mushroom_archetype!r}; falling back to {_MUSHROOM_ARCHETYPES[0]!r}. "
+                f"Valid: {_MUSHROOM_ARCHETYPES}",
+                file=sys.stderr,
             )
+            mushroom_archetype = _MUSHROOM_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[mushroom_archetype]
         self.mushroom_archetype = mushroom_archetype
         self.cap_radius = float(cap_radius if cap_radius is not None else d["cap_radius"])

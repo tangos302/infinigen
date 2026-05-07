@@ -182,10 +182,20 @@ class LowPolyWaterTowerFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if tower_archetype not in _TOWER_ARCHETYPES:
-            raise ValueError(
-                f"unknown tower_archetype {tower_archetype!r}; "
-                f"valid: {_TOWER_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[tower_archetype] WARN: unknown tower_archetype "
+                f"{tower_archetype!r}; falling back to {_TOWER_ARCHETYPES[0]!r}. "
+                f"Valid: {_TOWER_ARCHETYPES}",
+                file=sys.stderr,
             )
+            tower_archetype = _TOWER_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[tower_archetype]
         self.tower_archetype = tower_archetype
         self.leg_height = float(leg_height if leg_height is not None else d["leg_height"])

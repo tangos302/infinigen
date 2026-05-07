@@ -306,10 +306,20 @@ class LowPolyBoatFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if boat_archetype not in _BOAT_ARCHETYPES:
-            raise ValueError(
-                f"unknown boat_archetype {boat_archetype!r}; "
-                f"valid: {_BOAT_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[boat_archetype] WARN: unknown boat_archetype "
+                f"{boat_archetype!r}; falling back to {_BOAT_ARCHETYPES[0]!r}. "
+                f"Valid: {_BOAT_ARCHETYPES}",
+                file=sys.stderr,
             )
+            boat_archetype = _BOAT_ARCHETYPES[0]
         d = _ARCHETYPE_DEFAULTS[boat_archetype]
         self.boat_archetype = boat_archetype
         self.length = float(length if length is not None else d["length"])

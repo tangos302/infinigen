@@ -377,19 +377,39 @@ class LowPolyHouseFactory(AssetFactory):
     ):
         super().__init__(factory_seed, coarse=coarse)
         if building_archetype not in _BUILDING_ARCHETYPES:
-            raise ValueError(
-                f"unknown building_archetype {building_archetype!r}; "
-                f"valid: {_BUILDING_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[building_archetype] WARN: unknown building_archetype "
+                f"{building_archetype!r}; falling back to {_BUILDING_ARCHETYPES[0]!r}. "
+                f"Valid: {_BUILDING_ARCHETYPES}",
+                file=sys.stderr,
             )
+            building_archetype = _BUILDING_ARCHETYPES[0]
         # Pull archetype defaults; explicit kwargs override.
         d = _ARCHETYPE_DEFAULTS[building_archetype]
         self.building_archetype = building_archetype
         roof_archetype = roof_archetype or d["roof_archetype"]
         if roof_archetype not in _ROOF_ARCHETYPES:
-            raise ValueError(
-                f"unknown roof_archetype {roof_archetype!r}; "
-                f"valid: {_ROOF_ARCHETYPES}"
+            # Lenient fallback rather than crash. Sonnet has been
+            # observed to hallucinate plausible-sounding archetype
+            # names despite the factories_guide brief listing the
+            # valid set; killing a 6-minute build over a one-line
+            # archetype typo wastes a generation. Substitute the
+            # canonical default and warn to stderr.
+            import sys
+            print(
+                f"[roof_archetype] WARN: unknown roof_archetype "
+                f"{roof_archetype!r}; falling back to {_ROOF_ARCHETYPES[0]!r}. "
+                f"Valid: {_ROOF_ARCHETYPES}",
+                file=sys.stderr,
             )
+            roof_archetype = _ROOF_ARCHETYPES[0]
         self.roof_archetype = roof_archetype
         self.width = float(width if width is not None else d["width"])
         self.depth = float(depth if depth is not None else d["depth"])
