@@ -26,6 +26,7 @@ without hiding any factory entirely.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import textwrap
 from pathlib import Path
@@ -54,6 +55,7 @@ FACTORY_CATEGORIES: dict[str, str] = {
     # water — anything water-bound
     "water_surface": "water",
     "boat": "water",
+    "dock": "water",
     # objects — small props, scatter, ground furniture
     "barrel": "objects",
     "crate": "objects",
@@ -66,15 +68,40 @@ FACTORY_CATEGORIES: dict[str, str] = {
     "deck": "objects",
     # landmark — large structures, focal points, civilisation
     "building": "landmark",
+    "chapel": "landmark",
+    "ruin": "landmark",
+    "stone_bridge": "landmark",
+    "town_gate": "landmark",
     "suspension_bridge": "landmark",
     "cable_car": "landmark",
     "torii": "landmark",
     "well": "landmark",
+    "watermill": "landmark",
     "windmill": "landmark",
     "tombstone": "landmark",
+    "tavern": "landmark",
+    "town_block": "landmark",
+    "shopfront": "landmark",
+    "stable_yard": "landmark",
+    # living — deliberately separate from objects; hidden from prompt-time
+    # generation unless SONGE_ENABLE_LIVING_THINGS=1.
+    "farm_animal": "living",
+    "peasant": "living",
 }
 
-CATEGORY_ORDER: list[str] = ["terrain", "water", "landmark", "objects"]
+CATEGORY_ORDER: list[str] = ["terrain", "water", "landmark", "objects", "living"]
+LIVING_FACTORY_STEMS: frozenset[str] = frozenset({"farm_animal", "peasant"})
+
+
+def living_things_enabled() -> bool:
+    """Global gate for factories that depict living beings.
+
+    These factories exist for later opt-in use, but the normal generation
+    path keeps them out of the LLM catalog and runtime enrichment so Songe
+    doesn't unexpectedly populate scenes with people/animals.
+    """
+    value = os.environ.get("SONGE_ENABLE_LIVING_THINGS", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def category_for(module_stem: str) -> str:
@@ -202,7 +229,7 @@ def _find_factory_class(tree: ast.Module) -> tuple[str, str] | None:
     return None
 
 
-def _factory_files(mode: str = "low_poly") -> list[Path]:
+def _factory_files(mode: str = "low_poly", *, include_living: bool = True) -> list[Path]:
     """Factory files for the given mode.
 
     low_poly: factories/*.py + factories/native/*.py
@@ -217,6 +244,8 @@ def _factory_files(mode: str = "low_poly") -> list[Path]:
                 out.append(p)
         for p in sorted((FACTORIES_DIR / "native").glob("*.py")):
             if p.stem != "__init__":
+                if not include_living and p.stem in LIVING_FACTORY_STEMS:
+                    continue
                 out.append(p)
     else:  # realistic
         for p in sorted(FACTORIES_REALISTIC_DIR.glob("*.py")):
@@ -238,6 +267,18 @@ _FACTORY_KEYWORD_EXPANSIONS: dict[str, list[str]] = {
     "boulder": ["rock", "boulder", "stone", "moss"],
     "rock_arch": ["arch", "gateway", "portal", "rock"],
     "lighthouse": ["lighthouse", "beacon", "harbour", "harbor", "coast", "cliff"],
+    "chapel": ["chapel", "church", "shrine", "monastery", "graveyard", "village"],
+    "stone_bridge": ["bridge", "stone", "river", "road", "ford", "arch"],
+    "watermill": ["watermill", "mill", "river", "wheel", "farm", "grain"],
+    "ruin": ["ruin", "ruins", "ancient", "collapsed", "obelisk", "arch", "temple"],
+    "dock": ["dock", "pier", "wharf", "harbour", "harbor", "fishing", "shore"],
+    "town_gate": ["gate", "entrance", "road", "town", "castle", "palisade", "arch"],
+    "peasant": ["person", "people", "villager", "farmer", "merchant", "guard", "crowd"],
+    "farm_animal": ["animal", "livestock", "sheep", "goat", "cow", "chicken", "farm"],
+    "tavern": ["tavern", "inn", "pub", "guildhall", "market", "town", "alehouse"],
+    "town_block": ["town", "market", "street", "district", "rowhouse", "townhouse", "workshop", "settlement"],
+    "shopfront": ["shop", "shopfront", "store", "market", "bakery", "apothecary", "merchant"],
+    "stable_yard": ["stable", "paddock", "yard", "farm", "horse", "cart", "wagon"],
     "well": ["well", "village", "settlement", "courtyard"],
     "barrel": ["barrel", "cart", "market", "yard"],
     "crate": ["crate", "box", "yard", "market", "cargo"],
@@ -248,6 +289,8 @@ _FACTORY_KEYWORD_EXPANSIONS: dict[str, list[str]] = {
     "shrine": ["shrine", "altar", "monk", "temple", "zen"],
     "obelisk": ["obelisk", "monument", "monolith", "pillar"],
     "campfire": ["camp", "campfire", "fire", "hearth"],
+    "torch": ["torch", "sconce", "fire", "castle", "wall", "cave", "path"],
+    "candle_cluster": ["candle", "candles", "altar", "chapel", "crypt", "interior", "shrine"],
     "pier": ["pier", "dock", "harbour", "harbor", "wetland"],
     "bridge": ["bridge", "span", "river", "stream"],
     "windmill": ["windmill", "mill", "rural", "field"],
@@ -290,6 +333,15 @@ def _factory_keywords(
             if len(tok) >= 4 and tok not in _PITCH_STOP:
                 kw.add(tok)
     return kw
+
+
+def _presets_for_class(class_name: str) -> list[str]:
+    """Return named factory presets without requiring Blender imports."""
+    try:
+        from infinigen.maquette.factory_presets import ALL_PRESETS
+    except Exception:
+        return []
+    return sorted(ALL_PRESETS.get(class_name, {}))
 
 
 # Words that show up in pitches but tell us nothing useful for matching.
@@ -351,6 +403,7 @@ def _entry_for(path: Path) -> str | None:
     mod_pitch = next((ln for ln in mod_doc.splitlines() if ln.strip()), "")
     archetype_tuples = _find_archetype_tuples(tree)
     init_fn = _find_class_init(tree, class_name)
+    presets = _presets_for_class(class_name)
 
     parts = [f"### `{class_name}`", ""]
     if mod_pitch:
@@ -362,6 +415,14 @@ def _entry_for(path: Path) -> str | None:
         label = name.strip("_").removesuffix("_ARCHETYPES").lower() or "archetype"
         parts.append(f"**{label}** archetypes: `{'` / `'.join(values)}`")
     if archetype_tuples:
+        parts.append("")
+    if presets:
+        parts.append(f"**Named presets:** `{'` / `'.join(presets)}`")
+        parts.append(
+            "Use a preset when the prompt asks for a coherent look "
+            "(for example weathered, coastal, dead, young, lush) instead "
+            "of hand-tuning raw dimensions."
+        )
         parts.append("")
     if init_fn is not None:
         params = _format_init_params(init_fn)
@@ -398,9 +459,15 @@ def _short_entry_for(path: Path) -> str | None:
         pitch = pitch[:107] + "…"
     arch_count = sum(len(v) for _, v in _find_archetype_tuples(tree))
     arch_note = f" — {arch_count} archetype(s)" if arch_count else ""
+    presets = _presets_for_class(class_name)
+    preset_note = ""
+    if presets:
+        shown = ", ".join(presets[:5])
+        suffix = ", …" if len(presets) > 5 else ""
+        preset_note = f"; presets: {shown}{suffix}"
     if pitch:
-        return f"- `{class_name}`{arch_note} — {pitch}"
-    return f"- `{class_name}`{arch_note}"
+        return f"- `{class_name}`{arch_note}{preset_note} — {pitch}"
+    return f"- `{class_name}`{arch_note}{preset_note}"
 
 
 def _file_keywords(path: Path) -> tuple[str, set[str]] | None:
@@ -417,7 +484,10 @@ def _file_keywords(path: Path) -> tuple[str, set[str]] | None:
     mod_doc = _module_docstring(tree) or ""
     mod_pitch = next((ln for ln in mod_doc.splitlines() if ln.strip()), "")
     archetype_tuples = _find_archetype_tuples(tree)
-    return class_name, _factory_keywords(class_name, mod_pitch, archetype_tuples, path.stem)
+    keywords = _factory_keywords(class_name, mod_pitch, archetype_tuples, path.stem)
+    for preset in _presets_for_class(class_name):
+        keywords.update(_TOKEN_RE.findall(preset.lower()))
+    return class_name, keywords
 
 
 _HEADER = """\
@@ -644,7 +714,11 @@ Use these archetypal patterns rather than reinventing — they read well
 at low poly:
 
   - **Forest ring**: scatter ~15-25 trees in a circle of radius 15-22m
-    around the central scene; randomize archetype + scale 0.85-1.2.
+    around the central scene. Prefer `LoadedTreeFactory` from
+    `infinigen.maquette.runtime.loaded_factory` for leafy trees; these
+    are authored low-poly GLB meshes and read better than procedural
+    blob foliage. Use `NativeLowPolyTreeFactory` mainly for bare/dead
+    procedural silhouettes (`preset="bare_winter"` etc.).
   - **Building cluster**: 3-5 houses arranged around a central focal
     point (well, square, plaza), each rotated to face inward.
   - **Path props**: lanterns or torii at regular intervals along the
@@ -653,6 +727,53 @@ at low poly:
     natural transition.
   - **Yard scatter**: barrels + crates in clusters of 3-5 next to
     building doors.
+  - **Fishing village (coastal / fishing / harbour prompts)**: the
+    waterline is the focal point, NOT a market plaza. Run a
+    `LowPolyDockFactory` pier (`dock_archetype="fishing_wharf"` or
+    `"straight_pier"`) out over
+    the water; moor 1-3 `LowPolyBoatFactory` rowboats
+    (`boat_archetype="rowboat"`) at the dock head and along the shore;
+    line the beach with 3-6 `LowPolyFishDryingRackFactory` racks facing
+    the water; set `LowPolyHouseFactory` cottages back from the shore,
+    gable-end to the sea; scatter `LoadedTreeFactory` palms /
+    wind-bent trees on the headland. Keep boats / decks / racks within
+    ~8m of the waterline.
+  - **Oasis bazaar (oasis / bazaar / caravan prompts)**: the pool is the
+    focal point. Ring it with `LowPolyPalmTreeFactory` palms; arrange
+    4-8 `LowPolyBazaarTentFactory` tents plus `LowPolyMarketRugFactory`
+    rugs in a loose market ring 4-10m back from the water; cluster a rug
+    beside each tent (stall + spread goods); use sandstone ruin
+    fragments and the occasional `LowPolyHouseFactory` only as secondary
+    scatter. Tents + rugs + palms carry the bazaar — do NOT fall back to
+    a generic houses-near-water layout.
+
+### Premeshed tree bank
+
+For normal leafy trees, use the shipped GLB tree bank instead of trying
+to model foliage by hand:
+
+```python
+from infinigen.maquette.runtime.loaded_factory import LoadedTreeFactory
+
+tree = LoadedTreeFactory(
+    archetype="tree_oak",          # examples: tree_oak, tree_default,
+                                   # tree_blocks, tree_plateau, tree_fat,
+                                   # tree_thin, tree_cone,
+                                   # tree_pineDefaultA, tree_pineRoundA,
+                                   # tree_pineTallA, tree_palmBend
+    factory_seed=seed,
+    scale=2.0,
+    scale_jitter=0.16,             # per-seed overall size variation
+    xy_jitter=0.08,                # crown/trunk width variation
+    z_jitter=0.12,                 # taller/shorter silhouette variation
+    tint_palette=("foliage_pine", "foliage_bush", "foliage_apple"),
+    tint_strength=0.55,            # foliage tint; bark stays subtle
+).spawn_asset(i=i, loc=(x, y, terrain.height_at(x, y)))
+```
+
+Use `NativeLowPolyTreeFactory` only when you need procedural bare/dead
+trees, unusual skeletons, or a placeholder variant not present in the
+GLB bank.
 
 ### Material slots
 
@@ -1120,7 +1241,8 @@ def build_guide(mode: str = "low_poly", *, user_prompt: str | None = None) -> st
     header = _HEADER if mode == "low_poly" else _HEADER_REALISTIC
     parts = [header]
 
-    files = _factory_files(mode)
+    include_living = user_prompt is None or living_things_enabled()
+    files = _factory_files(mode, include_living=include_living)
     if user_prompt is None:
         # Legacy full-detail output (write_guide / inspection / fallback).
         for path in files:
@@ -1209,6 +1331,7 @@ def _structured_entry_for(path: Path) -> dict | None:
     archetype_tuples = _find_archetype_tuples(tree)
     init_fn = _find_class_init(tree, class_name)
     params = _format_init_params(init_fn) if init_fn is not None else []
+    presets = _presets_for_class(class_name)
     rel_path = path.relative_to(FORK_ROOT)
     return {
         "module": path.stem,
@@ -1224,13 +1347,14 @@ def _structured_entry_for(path: Path) -> dict | None:
         ],
         "constructor_params": params,
         "default_knobs": _find_archetype_defaults_keys(tree),
+        "presets": presets,
     }
 
 
 def list_factories(mode: str = "low_poly") -> list[dict]:
     """Return a structured list of every factory in the catalog for a mode."""
     out: list[dict] = []
-    for path in _factory_files(mode):
+    for path in _factory_files(mode, include_living=True):
         entry = _structured_entry_for(path)
         if entry is not None:
             out.append(entry)

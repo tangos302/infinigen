@@ -3,7 +3,8 @@
 Most-needed Tier-1 factory per empirical attempt log: missing in 5/6
 prompt attempts (medieval village, abandoned campsite, Wild West town,
 fishing village, monastery). Adds verticality + narrative "this is a
-lit place" without needing actual emission.
+lit place" and, by default, a real low-energy point light parented to
+the mesh.
 
 Archetypes:
   iron_post        — thin cylindrical post + boxy cage lamp on top
@@ -15,9 +16,9 @@ Material slots:
   slot 0 = post / pedestal       (default rust_metal / wood / rock_pale)
   slot 1 = lamp / glass / flame  (default foliage_lemon — warm yellow)
 
-The "glow" is just a colored material in v0; emission is out of scope
-(matches Maquette's no-lighting v0 mandate). Future enhancement: opt
-into an actual emission node + linkage with the scene's light setup.
+The glow material uses an emission shader and optional point light. Keep
+energies modest: scenes may scatter several lanterns and the live viewer
+caps exported lights.
 """
 
 from __future__ import annotations
@@ -31,7 +32,11 @@ from mathutils import Vector
 
 from infinigen.core.placement.factory import AssetFactory
 
-from ...materials import apply_palette_slots
+from ...materials import (
+    add_palette_point_light,
+    apply_emission_palette_slot,
+    apply_palette_slots,
+)
 
 
 _LANTERN_ARCHETYPES = ("iron_post", "wooden_post", "stone_brazier", "hanging_lantern")
@@ -261,6 +266,10 @@ class LowPolyLanternPostFactory(AssetFactory):
         lamp_archetype: str | None = None,
         post_color: str | None = None,
         lamp_color: str | None = None,
+        emit_light: bool = True,
+        light_energy: float | None = None,
+        light_radius: float | None = None,
+        emission_strength: float = 3.5,
         coarse: bool = False,
     ):
         super().__init__(factory_seed, coarse=coarse)
@@ -301,6 +310,12 @@ class LowPolyLanternPostFactory(AssetFactory):
             self.lamp_archetype = _fallback
         self.post_color = post_color or d["post_color"]
         self.lamp_color = lamp_color or d["lamp_color"]
+        self.emit_light = bool(emit_light)
+        default_energy = 55.0 if self.lamp_archetype != "bowl" else 95.0
+        default_radius = max(0.7, self.lamp_size * (1.8 if self.lamp_archetype != "bowl" else 2.4))
+        self.light_energy = float(light_energy if light_energy is not None else default_energy)
+        self.light_radius = float(light_radius if light_radius is not None else default_radius)
+        self.emission_strength = max(0.0, float(emission_strength))
 
     def create_placeholder(self, **kwargs) -> bpy.types.Object:
         ph = bpy.data.objects.new(
@@ -358,4 +373,20 @@ class LowPolyLanternPostFactory(AssetFactory):
             p.use_smooth = False
 
         apply_palette_slots(obj, [self.post_color, self.lamp_color])
+        apply_emission_palette_slot(
+            obj,
+            1,
+            self.lamp_color,
+            strength=self.emission_strength,
+        )
+        if self.emit_light:
+            light_z = self.post_height + max(0.18, self.lamp_size * 0.55)
+            add_palette_point_light(
+                name=f"{obj.name}_PointLight",
+                location=(0.0, 0.0, light_z),
+                palette_key=self.lamp_color,
+                energy=self.light_energy,
+                radius=self.light_radius,
+                parent=obj,
+            )
         return obj

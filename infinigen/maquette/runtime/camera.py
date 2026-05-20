@@ -124,6 +124,17 @@ def place_scene_camera(
         cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 
     cam.data.lens = float(chosen_lens)
+    # Blender's default camera ships with ``clip_end = 100`` BU, which is
+    # smaller than the camera-to-target distance for Strata maps (typically
+    # 200-300 BU). Without this, the entire scene falls past the far clip
+    # plane and renders as uniform sky — the gray-render bug that bit v4.
+    # Pad past the scene diagonal to keep the whole map in the frustum.
+    needed_far = max(float(distance) * 3.5, float(terrain_size) * 4.0, 600.0)
+    if cam.data.clip_end < needed_far:
+        cam.data.clip_end = float(needed_far)
+    # Tighten the near plane a touch in case it was nudged high.
+    if cam.data.clip_start > 0.5:
+        cam.data.clip_start = 0.1
     return cam
 
 
@@ -160,6 +171,23 @@ def _plan_framing(
 
     chosen_lens = float(lens_mm)
     distance = float(distance_factor) * float(terrain_size)
+    camera_profile = str(getattr(composition, "camera_profile", "") or "default")
+
+    if camera_profile == "caldera_wide":
+        chosen_lens = min(chosen_lens, 30.0)
+        distance = max(distance, float(terrain_size) * 1.78)
+    elif camera_profile == "basin_wide":
+        chosen_lens = min(chosen_lens, 30.0)
+        distance = max(distance, float(terrain_size) * 1.62)
+    elif camera_profile == "coastal_land_bias":
+        # Coastal prompts need water visible, but not as a full-frame
+        # foreground slab. A slightly wider stand-off shows the shoreline
+        # settlement and the inland terrain together.
+        chosen_lens = min(chosen_lens, 32.0)
+        distance = max(distance, float(terrain_size) * 1.58)
+    elif camera_profile == "castle_compound":
+        chosen_lens = min(chosen_lens, 32.0)
+        distance = max(distance, float(terrain_size) * 1.42)
 
     # Branch 1 — panorama (3+ heroes).
     if len(heroes) >= 3:
@@ -207,7 +235,7 @@ def _plan_framing(
 
     # Branch 2 — lake-aware pullback (single/dual hero + water).
     # Skip for panorama branch (already lens-tuned for fit).
-    if len(heroes) < 3 and water is not None and heroes:
+    if len(heroes) < 3 and water is not None and heroes and camera_profile != "coastal_land_bias":
         water_radius = float(getattr(water, "radius", 0.0))
         if water_radius > 8.0:  # only bother pulling back for sizeable lakes
             # Distance from camera to lake center along the camera ray.
@@ -246,6 +274,7 @@ def _pick_azimuth(composition: Any, target_xy: tuple[float, float]) -> float:
     heroes = getattr(composition, "heroes", None) or []
     water = getattr(composition, "water", None)
     ridges = getattr(composition, "ridges", None) or []
+    camera_profile = str(getattr(composition, "camera_profile", "") or "default")
 
     if heroes and water is not None:
         # Camera past water in the direction water lies from hero, so
@@ -254,7 +283,17 @@ def _pick_azimuth(composition: Any, target_xy: tuple[float, float]) -> float:
         dx = float(water.cx) - float(h.cx)
         dy = float(water.cy) - float(h.cy)
         if math.hypot(dx, dy) > 1.0:
-            return math.atan2(dy, dx)
+            water_angle = math.atan2(dy, dx)
+            if camera_profile == "coastal_land_bias":
+                # Look along the shoreline instead of straight across the
+                # ocean. Pick the perpendicular that keeps the camera on the
+                # lower-Y side by default, which tends to show more landmass
+                # on our isometric boards.
+                candidate = water_angle + math.pi * 0.5
+                if math.sin(candidate) > 0:
+                    candidate += math.pi
+                return candidate
+            return water_angle
 
     if heroes and ridges:
         # Camera 90° to the ridge axis so the silhouette is widest in

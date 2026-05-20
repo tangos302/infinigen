@@ -872,9 +872,11 @@ def build_prompt(
 def _scene_brief_block(map_size: str) -> str:
     """Hero count + path requirements injected as a 'scene brief'.
 
-    Hero count maps directly off ``map_size``: small = 1, medium = 2,
+    Hero capacity maps directly off ``map_size``: small = 1, medium = 2,
     large = 3, xl = 5 (XL is also 2× the world size of L; see the xl
-    branch below). The path requirement is unconditional — the scene
+    branch below). This is a cap, not a quota: the scene can use fewer,
+    and user-requested extra focal areas should be honored only while the
+    map can carry them. The path requirement is unconditional — the scene
     must feel walkable to a player — unless the user prompt explicitly
     says otherwise (e.g. "wild untouched valley"). Claude is told to
     read the prompt for that opt-out.
@@ -883,11 +885,11 @@ def _scene_brief_block(map_size: str) -> str:
     hero_count = {"small": 1, "medium": 2, "large": 3, "xl": 5}.get(size, 3)
     if hero_count == 1:
         hero_phrasing = (
-            "exactly **one hero landmark** — a single major structure or "
+            "up to **one hero landmark** — a single major structure or "
             "natural feature. Tag it as the primary "
-            "(`# HERO: primary — ...`). Don't add a second hero; let "
-            "the surrounding scatter (trees, rocks, props) carry the "
-            "supporting weight.\n\n"
+            "(`# HERO: primary — ...`). On small maps, if the user asks "
+            "for more heroes, build the first/most important one and turn "
+            "the rest into minor props or omit them.\n\n"
             "**Primary placement (1-hero scenes):** pick a quadrant "
             "from the table below using a deterministic per-prompt pick "
             "(e.g. `random.Random(SEED).choice(...)`); do NOT default "
@@ -896,10 +898,11 @@ def _scene_brief_block(map_size: str) -> str:
         )
     elif hero_count == 2:
         hero_phrasing = (
-            "**two hero landmarks** — one **primary** (the largest, the "
-            "silhouette the camera frames) and one **supporting** "
-            "(smaller, off-axis, complementary). Tag both with "
-            "`# HERO: primary — ...` and `# HERO: supporting — ...`.\n\n"
+            "up to **two hero landmarks**. Usually this is one **primary** "
+            "(the largest, the silhouette the camera frames) and one "
+            "**supporting** (smaller, off-axis, complementary). If the "
+            "prompt names two co-equal focal areas, both may be tagged "
+            "`# HERO: primary — ...`.\n\n"
             "**Placement (2-hero scenes):** place primary in one quadrant "
             "and supporting in a *different* one. Their XY distance "
             "must be ≥ 18 BU. Don't cluster them on top of each other; "
@@ -907,12 +910,13 @@ def _scene_brief_block(map_size: str) -> str:
         )
     elif hero_count == 3:
         hero_phrasing = (
-            "**three hero landmarks** — one **primary** (the biggest, "
-            "the silhouette the camera frames first) plus **two "
-            "supporting** landmarks that share the world. Primary is "
-            "roughly twice the silhouette area of either supporting. "
-            "Tag them: `# HERO: primary — ...`, `# HERO: supporting — ...` "
-            "(twice).\n\n"
+            "up to **three hero landmarks**. Usually this is one "
+            "**primary** (the biggest, the silhouette the camera frames "
+            "first) plus **two supporting** landmarks that share the "
+            "world. If the prompt names multiple co-equal focal areas, "
+            "multiple `# HERO: primary — ...` tags are allowed. Primary "
+            "heroes should still be visually major; supporting heroes are "
+            "secondary.\n\n"
             "**Placement (3-hero scenes):** all three heroes must occupy "
             "**different quadrants** of the map. **Pairwise XY distance "
             "must be ≥ 18 BU** for every pair. The primary is NOT "
@@ -932,13 +936,13 @@ def _scene_brief_block(map_size: str) -> str:
         )
     else:  # xl
         hero_phrasing = (
-            "**five hero landmarks** — one **primary** plus **four "
-            "supporting** landmarks scattered across the map. Treat the "
-            "scene as a small region with multiple settlements / vistas. "
-            "Tag each in comments: `# HERO: primary — ...` (×1), "
-            "`# HERO: supporting — ...` (×4). All five heroes occupy "
-            "distinct sectors of the map, pairwise XY distance ≥ 22 BU "
-            "(distances scale with the larger world).\n\n"
+            "up to **five hero landmarks** scattered across the map. "
+            "Treat the scene as a small region with multiple settlements "
+            "/ vistas. Use one or more `# HERO: primary — ...` tags for "
+            "co-equal major focal areas and `# HERO: supporting — ...` "
+            "for secondary landmarks. All accepted heroes occupy distinct "
+            "sectors of the map, pairwise XY distance ≥ 22 BU (distances "
+            "scale with the larger world).\n\n"
             "**XL world size:** the map is 2× the standard L size. Use "
             "`size=160` for `make_eroded_terrain` (world is 320 BU "
             "wide; the size kwarg is a half-width). Camera is auto-"
@@ -972,18 +976,23 @@ def _scene_brief_block(map_size: str) -> str:
         f"This scene must have {hero_phrasing}\n\n"
         "Heroes are distinct from props/scatter — a hero gets its own "
         "factory call and explicit `place(...)` line; props live inside "
-        "scatter calls or short loops. The brief requests up to "
-        "**N heroes** for the map size, but **fewer is allowed**: when "
+        "scatter calls or short loops. The brief defines a map-size "
+        "**hero capacity**, but **fewer is allowed**: when "
         "the prompt suggests a single dominant landmark (e.g. 'lone "
         "watchtower on a windswept plateau', 'isolated chapel', "
         "'monolithic citadel'), emit ONE primary hero and leave the "
         "supporting-hero slots empty. Sky CotL framing is single "
         "silhouette > multi-landmark. Use the full count for villages "
         "/ towns / multi-settlement scenes where the prompt explicitly "
-        "describes multiple landmarks. Tagging is non-negotiable — "
-        "the post-build validator scans for `# HERO: primary` / "
-        "`# HERO: supporting` comment lines, requires exactly one "
-        "`primary`, and rejects over-count (under-count is allowed).\n\n"
+        "describes multiple landmarks. If the user asks for more primary "
+        "or supporting heroes than the map can carry, build the first / "
+        "most important heroes up to the capacity and omit the rest from "
+        "the authored scene; if you track an object budget, record those "
+        "omissions with reason `hero_capacity_limit`. Tagging is "
+        "non-negotiable — the post-build validator scans for "
+        "`# HERO: primary` / `# HERO: supporting` comment lines, requires "
+        "at least one `primary`, allows multiple primaries, and treats "
+        "over-cap hero tags as ignored rather than fatal.\n\n"
         "### You are the art director — Composition is your brush kit\n\n"
         "**Mental model:** procedural noise (FBM, erosion, warping) is the "
         "TEXTURE on which you paint, not the composition itself. Your job is "
@@ -1393,15 +1402,22 @@ def extract_debug_narrative(response: str) -> str | None:
 
 
 def call_claude(prompt: str, *, model: str | None = None,
-                timeout_seconds: int = 300) -> str:
+                timeout_seconds: int = 300,
+                extra_env: dict[str, str] | None = None,
+                extra_args: list[str] | None = None) -> str:
     """Run `claude -p <prompt>` and return stdout. The prompt is passed via
-    stdin to avoid shell-arg-length limits."""
+    stdin to avoid shell-arg-length limits.
+
+    ``extra_env`` is merged into the subprocess environment — songe-core's
+    Track A6 metered-API path injects ``ANTHROPIC_API_KEY`` this way.
+    ``extra_args`` are appended to the CLI invocation (e.g. ``--bare``)."""
     if shutil.which("claude") is None:
         raise RuntimeError(
             "`claude` CLI not found on PATH. Install Claude Code or "
             "ensure the binary is in PATH for this user."
         )
     cmd = ["claude", "-p"]
+    cmd.extend(extra_args or [])
     if model:
         cmd.extend(["--model", model])
     # Run from a neutral dir so claude doesn't auto-discover the
@@ -1414,6 +1430,10 @@ def call_claude(prompt: str, *, model: str | None = None,
         if k not in ("CLAUDE_PROJECT_DIR", "PWD", "OLDPWD")
     }
     pipeline_env["PWD"] = "/tmp"
+    # Track A6: metered-API billing — songe-core injects ANTHROPIC_API_KEY
+    # here so `claude -p` bills the per-token API pool, not a Max subscription.
+    if extra_env:
+        pipeline_env.update(extra_env)
     # Sonnet's build scripts now run 4-8 k lines (~25-40 k tokens) with
     # the Round 6 brief (Hoodoo/Arch/Pillar SDFs, A* paths, two-tone
     # rock, Voronoi biome drift). Default 32k cap aborts mid-script.
@@ -1444,7 +1464,9 @@ def generate(user_prompt: str, *, model: str | None = None,
              debug: bool = False,
              include_categories: list[str] | None = None,
              mode: str = "low_poly",
-             map_size: str = "large") -> GenerationResult:
+             map_size: str = "large",
+             extra_env: dict[str, str] | None = None,
+             extra_args: list[str] | None = None) -> GenerationResult:
     """End-to-end: prompt → Claude → extracted script.
 
     ``mode`` selects the factory catalog: ``low_poly`` (stylized maquette,
@@ -1474,11 +1496,13 @@ def generate(user_prompt: str, *, model: str | None = None,
             for line in head
         )
 
-    response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
+    response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds,
+                           extra_env=extra_env, extra_args=extra_args)
     script = extract_script(response)
     if _looks_truncated(script):
         print("[runner] extracted script appears truncated (no imports in first 30 lines); retrying once")
-        response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds)
+        response = call_claude(full_prompt, model=model, timeout_seconds=timeout_seconds,
+                           extra_env=extra_env, extra_args=extra_args)
         script = extract_script(response)
     requested = extract_requested_assets(script)
     narrative = extract_debug_narrative(response) if debug else None

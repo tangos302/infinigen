@@ -282,8 +282,8 @@ def _foliage_umbrella(
     icosphere stretched horizontally and squashed vertically. Returns #
     of faces added."""
     prev_face_count = len(bm.faces)
-    rxy = crown_radius * 1.4
-    rz = crown_height * 0.30  # pancaked
+    rxy = crown_radius * 1.12
+    rz = crown_height * 0.34  # broad canopy, not a pure pancake
     center = Vector((crown_position.x, crown_position.y, crown_position.z + rz))
     result = bmesh.ops.create_icosphere(
         bm, subdivisions=icosphere_subdivisions, radius=1.0
@@ -378,6 +378,436 @@ def _foliage_bush(
     return total_added
 
 
+def _add_foliage_ellipsoid(
+    bm,
+    *,
+    center: Vector,
+    radius_xy: float,
+    radius_z: float,
+    subdivisions: int,
+    smooth_shade: bool,
+) -> int:
+    """Append one low-poly ellipsoid and return the face count added."""
+    prev_face_count = len(bm.faces)
+    result = bmesh.ops.create_icosphere(
+        bm, subdivisions=max(0, subdivisions), radius=1.0
+    )
+    for v in result["verts"]:
+        v.co.x = v.co.x * radius_xy + center.x
+        v.co.y = v.co.y * radius_xy + center.y
+        v.co.z = v.co.z * radius_z + center.z
+    bm.faces.ensure_lookup_table()
+    if smooth_shade:
+        for j in range(prev_face_count, len(bm.faces)):
+            bm.faces[j].smooth = True
+    return len(bm.faces) - prev_face_count
+
+
+def _add_frustum(
+    bm,
+    *,
+    center: Vector,
+    radius_bottom: float,
+    radius_top: float,
+    height: float,
+    sides: int,
+    yaw: float = 0.0,
+    cap_top: bool = True,
+    cap_bottom: bool = False,
+    smooth_shade: bool = False,
+) -> int:
+    """Append a faceted vertical frustum/cone tier."""
+    prev_face_count = len(bm.faces)
+    sides = max(3, int(sides))
+    bottom = []
+    top = []
+    z0 = center.z - height * 0.5
+    z1 = center.z + height * 0.5
+    for i in range(sides):
+        a = yaw + i * (2 * math.pi / sides)
+        ca = math.cos(a)
+        sa = math.sin(a)
+        bottom.append(bm.verts.new((center.x + ca * radius_bottom, center.y + sa * radius_bottom, z0)))
+        top.append(bm.verts.new((center.x + ca * radius_top, center.y + sa * radius_top, z1)))
+    bm.verts.ensure_lookup_table()
+    for i in range(sides):
+        face = bm.faces.new((bottom[i], bottom[(i + 1) % sides], top[(i + 1) % sides], top[i]))
+        face.smooth = smooth_shade
+    if cap_top and radius_top > 0.001:
+        face = bm.faces.new(tuple(reversed(top)))
+        face.smooth = smooth_shade
+    if cap_bottom:
+        face = bm.faces.new(tuple(bottom))
+        face.smooth = smooth_shade
+    bm.faces.ensure_lookup_table()
+    return len(bm.faces) - prev_face_count
+
+
+def _add_leaf_card(
+    bm,
+    *,
+    center: Vector,
+    direction: Vector,
+    length: float,
+    width: float,
+    lift: float = 0.0,
+    droop: float = 0.0,
+) -> int:
+    """Append one diamond-shaped low-poly leaf plate.
+
+    This is intentionally geometry, not an alpha plane. The face reads as
+    an individual clump/leaf mass and avoids the stretched-sphere look.
+    """
+    direction = Vector((direction.x, direction.y, 0.0))
+    if direction.length < 1e-6:
+        direction = Vector((1.0, 0.0, 0.0))
+    direction.normalize()
+    side = Vector((-direction.y, direction.x, 0.0))
+    base = center - direction * (length * 0.42) + Vector((0.0, 0.0, lift * 0.25))
+    left = center + side * width + Vector((0.0, 0.0, lift))
+    tip = center + direction * (length * 0.58) - Vector((0.0, 0.0, droop))
+    right = center - side * width + Vector((0.0, 0.0, lift * 0.35))
+    points = (base, left, tip, right)
+    verts = [bm.verts.new(p) for p in points]
+    bm.verts.ensure_lookup_table()
+    bm.faces.new(tuple(verts))
+    # Blender materials are two-sided in many viewport modes, but Cycles
+    # still reads the face normal for lighting. Add a back face so
+    # foliage cards don't disappear at unlucky camera angles.
+    back_verts = [bm.verts.new(p) for p in points]
+    bm.verts.ensure_lookup_table()
+    bm.faces.new(tuple(reversed(back_verts)))
+    bm.faces.ensure_lookup_table()
+    return 2
+
+
+def _add_hanging_strip(
+    bm,
+    *,
+    top_center: Vector,
+    direction: Vector,
+    length: float,
+    width: float,
+    bend: float,
+) -> int:
+    """Append a vertical tapered leaf curtain for willow-like trees."""
+    direction = Vector((direction.x, direction.y, 0.0))
+    if direction.length < 1e-6:
+        direction = Vector((1.0, 0.0, 0.0))
+    direction.normalize()
+    side = Vector((-direction.y, direction.x, 0.0))
+    bottom_center = top_center + direction * bend - Vector((0.0, 0.0, length))
+    points = (
+        top_center - side * width,
+        top_center + side * width,
+        bottom_center + side * width * 0.42,
+        bottom_center - side * width * 0.42,
+    )
+    verts = [bm.verts.new(p) for p in points]
+    bm.verts.ensure_lookup_table()
+    bm.faces.new(tuple(verts))
+    back_verts = [bm.verts.new(p) for p in points]
+    bm.verts.ensure_lookup_table()
+    bm.faces.new(tuple(reversed(back_verts)))
+    bm.faces.ensure_lookup_table()
+    return 2
+
+
+def _foliage_layered_broadleaf(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Several overlapping leaf masses around the branch structure.
+
+    This is deliberately not a single balloon and not a pine stack: the
+    silhouette has side lobes, small gaps, and a broader upper canopy so
+    oaks/maples read differently from pines at scene distance.
+    """
+    total_added = 0
+    n = rng.randint(6, 9)
+    base_angle = rng.uniform(0, 2 * math.pi)
+    for i in range(n):
+        t = i / max(n - 1, 1)
+        ring = 0.35 + 0.45 * math.sin(t * math.pi)
+        angle = base_angle + i * 2.399963 + rng.uniform(-0.35, 0.35)
+        ox = math.cos(angle) * crown_radius * ring * rng.uniform(0.35, 0.85)
+        oy = math.sin(angle) * crown_radius * ring * rng.uniform(0.35, 0.85)
+        oz = crown_height * (0.16 + 0.72 * t) + rng.uniform(-0.08, 0.08) * crown_height
+        radius_xy = crown_radius * rng.uniform(0.42, 0.68) * (1.08 - 0.22 * t)
+        radius_z = crown_height * rng.uniform(0.13, 0.20)
+        total_added += _add_foliage_ellipsoid(
+            bm,
+            center=Vector((crown_position.x + ox, crown_position.y + oy, crown_position.z + oz)),
+            radius_xy=radius_xy,
+            radius_z=radius_z,
+            subdivisions=icosphere_subdivisions,
+            smooth_shade=smooth_shade,
+        )
+    return total_added
+
+
+def _foliage_tiered_cones(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Stacked low-poly frustum/cone tiers, inspired by game-ready
+    conifer assets. This replaces sphere-stacks for pine silhouettes."""
+    total_added = 0
+    layers = max(3, min(6, int(round(crown_height / max(crown_radius * 0.45, 0.35)))))
+    yaw = rng.uniform(0, 2 * math.pi)
+    for i in range(layers):
+        t = i / max(layers - 1, 1)
+        radius = crown_radius * (1.0 - 0.68 * t) * rng.uniform(0.92, 1.08)
+        z = crown_position.z + crown_height * (0.10 + 0.82 * t)
+        height = crown_height / layers * rng.uniform(0.52, 0.70)
+        total_added += _add_frustum(
+            bm,
+            center=Vector((
+                crown_position.x + rng.uniform(-0.035, 0.035) * crown_radius,
+                crown_position.y + rng.uniform(-0.035, 0.035) * crown_radius,
+                z,
+            )),
+            radius_bottom=radius,
+            radius_top=radius * rng.uniform(0.16, 0.28),
+            height=height,
+            sides=rng.choice([6, 7, 8]),
+            yaw=yaw + i * 0.31,
+            cap_top=True,
+            cap_bottom=False,
+            smooth_shade=False,
+        )
+    return total_added
+
+
+def _foliage_leaf_cards(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Radial diamond leaf-card canopy.
+
+    Useful for oaks, flowering trees, and shrubs where individual plate
+    masses read better than balloons.
+    """
+    total_added = 0
+    total_added += _add_frustum(
+        bm,
+        center=crown_position + Vector((0.0, 0.0, crown_height * 0.48)),
+        radius_bottom=crown_radius * 0.82,
+        radius_top=crown_radius * 0.58,
+        height=crown_height * 0.26,
+        sides=9,
+        yaw=rng.uniform(0, 2 * math.pi),
+        cap_top=True,
+        cap_bottom=False,
+        smooth_shade=False,
+    )
+    rows = 3
+    base_angle = rng.uniform(0, 2 * math.pi)
+    for row in range(rows):
+        t = row / max(rows - 1, 1)
+        n = 8 if row == 0 else 7 if row == 1 else 5
+        row_radius = crown_radius * (0.95 - 0.25 * t)
+        z = crown_height * (0.22 + 0.54 * t)
+        for i in range(n):
+            angle = base_angle + i * (2 * math.pi / n) + row * 0.37 + rng.uniform(-0.18, 0.18)
+            direction = Vector((math.cos(angle), math.sin(angle), 0.0))
+            center = (
+                crown_position
+                + direction * row_radius * rng.uniform(0.28, 0.74)
+                + Vector((0.0, 0.0, z + rng.uniform(-0.08, 0.08) * crown_height))
+            )
+            total_added += _add_leaf_card(
+                bm,
+                center=center,
+                direction=direction,
+                length=crown_radius * rng.uniform(0.72, 1.05) * (1.0 - 0.16 * t),
+                width=crown_radius * rng.uniform(0.23, 0.36) * (1.0 - 0.10 * t),
+                lift=crown_height * rng.uniform(0.02, 0.08),
+                droop=crown_height * rng.uniform(0.03, 0.12),
+            )
+    return total_added
+
+
+def _foliage_columnar(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Tall narrow stacked crown for cypress/poplar silhouettes."""
+    total_added = 0
+    n = 6
+    for i in range(n):
+        t = i / max(n - 1, 1)
+        radius_profile = 0.35 + 0.65 * math.sin((1.0 - t * 0.72) * math.pi * 0.72)
+        radius_xy = crown_radius * max(0.28, radius_profile) * rng.uniform(0.82, 1.08)
+        radius_z = crown_height / n * rng.uniform(0.58, 0.78)
+        ox = rng.uniform(-0.08, 0.08) * crown_radius
+        oy = rng.uniform(-0.08, 0.08) * crown_radius
+        oz = crown_height * (0.08 + 0.86 * t)
+        total_added += _add_foliage_ellipsoid(
+            bm,
+            center=Vector((crown_position.x + ox, crown_position.y + oy, crown_position.z + oz)),
+            radius_xy=radius_xy,
+            radius_z=radius_z,
+            subdivisions=icosphere_subdivisions,
+            smooth_shade=smooth_shade,
+        )
+    return total_added
+
+
+def _foliage_windswept(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Asymmetric crown pushed to one side, useful for coasts/ridges."""
+    total_added = 0
+    wind_angle = rng.uniform(0, 2 * math.pi)
+    wind_vec = Vector((math.cos(wind_angle), math.sin(wind_angle), 0.0))
+    side_vec = Vector((-math.sin(wind_angle), math.cos(wind_angle), 0.0))
+    n = rng.randint(4, 6)
+    for i in range(n):
+        t = i / max(n - 1, 1)
+        push = crown_radius * (0.25 + 0.82 * t)
+        side = rng.uniform(-0.22, 0.22) * crown_radius
+        vertical = crown_height * (0.20 + 0.62 * t)
+        center = (
+            crown_position
+            + wind_vec * push
+            + side_vec * side
+            + Vector((0.0, 0.0, vertical))
+        )
+        total_added += _add_foliage_ellipsoid(
+            bm,
+            center=center,
+            radius_xy=crown_radius * rng.uniform(0.42, 0.62) * (1.05 - 0.2 * t),
+            radius_z=crown_height * rng.uniform(0.13, 0.18),
+            subdivisions=icosphere_subdivisions,
+            smooth_shade=smooth_shade,
+        )
+    return total_added
+
+
+def _foliage_none(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """No foliage at all: winter/dead trees rely on the branch skeleton."""
+    return 0
+
+
+def _foliage_weeping(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Weeping willow-style crown with hanging leaf curtains."""
+    total_added = 0
+    top = crown_position + Vector((0.0, 0.0, crown_height * 0.82))
+    total_added += _add_frustum(
+        bm,
+        center=top,
+        radius_bottom=crown_radius * 1.05,
+        radius_top=crown_radius * 0.62,
+        height=crown_height * 0.20,
+        sides=9,
+        yaw=rng.uniform(0, 2 * math.pi),
+        cap_top=True,
+        cap_bottom=False,
+        smooth_shade=False,
+    )
+    n = rng.randint(13, 17)
+    base_angle = rng.uniform(0, 2 * math.pi)
+    for i in range(n):
+        angle = base_angle + i * (2 * math.pi / n) + rng.uniform(-0.16, 0.16)
+        radius = crown_radius * rng.uniform(0.45, 0.95)
+        direction = Vector((math.cos(angle), math.sin(angle), 0.0))
+        top_center = Vector((
+            crown_position.x + direction.x * radius,
+            crown_position.y + direction.y * radius,
+            crown_position.z + crown_height * rng.uniform(0.55, 0.78),
+        ))
+        total_added += _add_hanging_strip(
+            bm,
+            top_center=top_center,
+            direction=direction,
+            length=crown_height * rng.uniform(0.34, 0.68),
+            width=crown_radius * rng.uniform(0.06, 0.12),
+            bend=crown_radius * rng.uniform(0.02, 0.12),
+        )
+    return total_added
+
+
+def _foliage_baobab_crown(
+    bm,
+    crown_position: Vector,
+    crown_radius: float,
+    crown_height: float,
+    icosphere_subdivisions: int,
+    rng: random.Random,
+    smooth_shade: bool,
+) -> int:
+    """Sparse, high, broken leaf-card crown for baobab/savanna trees.
+
+    The fat trunk does most of the visual work. The foliage is deliberately
+    separated into small top leaf plates so it doesn't collapse into an oak.
+    """
+    total_added = 0
+    n = rng.randint(7, 10)
+    base_angle = rng.uniform(0, 2 * math.pi)
+    for i in range(n):
+        angle = base_angle + i * (2 * math.pi / n) + rng.uniform(-0.25, 0.25)
+        direction = Vector((math.cos(angle), math.sin(angle), 0.0))
+        radius = crown_radius * rng.uniform(0.35, 0.95)
+        center = Vector((
+            crown_position.x + direction.x * radius,
+            crown_position.y + direction.y * radius,
+            crown_position.z + crown_height * rng.uniform(0.62, 0.92),
+        ))
+        total_added += _add_leaf_card(
+            bm,
+            center=center,
+            direction=direction,
+            length=crown_radius * rng.uniform(0.42, 0.68),
+            width=crown_radius * rng.uniform(0.16, 0.25),
+            lift=crown_height * rng.uniform(0.01, 0.05),
+            droop=crown_height * rng.uniform(0.02, 0.08),
+        )
+    return total_added
+
+
 # ---------------------------------------------------------------------------
 # Pine cone foliage + dispatcher
 # ---------------------------------------------------------------------------
@@ -426,11 +856,19 @@ def _foliage_pine_cone(
 # Map archetype name → builder function. All builders take the same args
 # so the dispatch site doesn't need archetype-specific branching.
 _FOLIAGE_BUILDERS = {
-    "pine_cone":  _foliage_pine_cone,
-    "round_ball": _foliage_round_ball,
-    "umbrella":   _foliage_umbrella,
-    "crystal":    _foliage_crystal,
-    "bush":       _foliage_bush,
+    "pine_cone":          _foliage_pine_cone,
+    "round_ball":         _foliage_round_ball,
+    "umbrella":           _foliage_umbrella,
+    "crystal":            _foliage_crystal,
+    "bush":               _foliage_bush,
+    "layered_broadleaf":  _foliage_layered_broadleaf,
+    "tiered_cones":       _foliage_tiered_cones,
+    "leaf_cards":         _foliage_leaf_cards,
+    "columnar":           _foliage_columnar,
+    "windswept":          _foliage_windswept,
+    "none":               _foliage_none,
+    "weeping":            _foliage_weeping,
+    "baobab_crown":       _foliage_baobab_crown,
 }
 
 
@@ -549,9 +987,10 @@ class NativeLowPolyTreeFactory(AssetFactory):
         crown_z_fraction: float = 0.45,
         # Default archetype is pine_cone — most tree-like silhouette
         # for a generic forest scatter. Callers wanting deliberate
-        # variety pass `foliage_archetype="round_ball"` /
-        # "umbrella" / "bush" / "crystal" per spawn.
-        foliage_archetype: str = "pine_cone",
+        # variety pass `foliage_archetype="tiered_cones"` /
+        # "leaf_cards" / "columnar" / "windswept" / "weeping" /
+        # "baobab_crown" / "none" / "umbrella" / "bush" / "crystal".
+        foliage_archetype: str = "tiered_cones",
         foliage_layers: int = 4,
         foliage_radius: float = 1.6,
         foliage_height: float = 3.0,
@@ -569,7 +1008,13 @@ class NativeLowPolyTreeFactory(AssetFactory):
         trunk_color: str | None = "rock_shadow",
         palette_color: str | None = "foliage_pine",
         coarse: bool = False,
+        **_unused_kwargs,
     ):
+        # v5-3: route through the shared compat helper so the stderr warning
+        # is uniformly formatted and the sidecar audit records the ignored
+        # kwargs alongside the build artifacts.
+        from infinigen.maquette.factory_kwargs_compat import accept_unused_kwargs
+        accept_unused_kwargs("NativeLowPolyTreeFactory", _unused_kwargs)
         super().__init__(factory_seed, coarse=coarse)
         if archetype != "pine":
             # Lenient fallback — only 'pine' is implemented but Sonnet
@@ -707,7 +1152,11 @@ class NativeLowPolyTreeFactory(AssetFactory):
             # Branch lower fraction is relative to the *skeleton* height,
             # not the conceptual trunk_height. Recompute so branches still
             # only spawn at the upper end of the visible trunk.
-            branch_lower_z_fraction=min(0.99, crown_z_base / max(trunk_skel_height, 1e-6)),
+            branch_lower_z_fraction=min(
+                0.99,
+                (self.trunk_height * self.branch_lower_z_fraction)
+                / max(trunk_skel_height, 1e-6),
+            ),
             trunk_archetype=self.trunk_archetype,
             curve_amplitude=self.trunk_curve_amplitude,
         )
@@ -788,3 +1237,19 @@ class NativeLowPolyTreeFactory(AssetFactory):
         elif self.trunk_color is not None:
             apply_palette(obj, self.trunk_color)
         return obj
+
+
+class LowPolyTreeFactory(NativeLowPolyTreeFactory):
+    """Compatibility wrapper for LLM-authored build scripts.
+
+    The public factory bank exposes ``NativeLowPolyTreeFactory``, but generated
+    scripts sometimes import the more obvious ``LowPolyTreeFactory`` from this
+    module and pass ``species=...``. Keep that alias recoverable by mapping the
+    legacy name to the native implementation and treating ``species`` as the
+    native ``archetype`` hint when possible.
+    """
+
+    def __init__(self, factory_seed, species: str | None = None, **kwargs):
+        if species and "archetype" not in kwargs:
+            kwargs["archetype"] = "pine" if species == "pine" else species
+        super().__init__(factory_seed, **kwargs)

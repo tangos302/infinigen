@@ -114,7 +114,10 @@ class LowPolyBarrelFactory(AssetFactory):
         body_color: str | None = None,
         band_color: str | None = None,
         coarse: bool = False,
+        **_unused_kwargs,
     ):
+        from infinigen.maquette.factory_kwargs_compat import accept_unused_kwargs
+        accept_unused_kwargs("LowPolyBarrelFactory", _unused_kwargs)
         super().__init__(factory_seed, coarse=coarse)
         if barrel_archetype not in _BARREL_ARCHETYPES:
             # Lenient fallback rather than crash. Sonnet has been

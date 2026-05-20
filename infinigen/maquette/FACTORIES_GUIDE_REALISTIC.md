@@ -95,25 +95,34 @@ from infinigen.maquette.factories.native.wagon import LowPolyWagonFactory
 from infinigen.maquette.factories.native.barrel import LowPolyBarrelFactory
 from infinigen.maquette.factories.native.crate import LowPolyCrateFactory
 from infinigen.maquette.factories.native.haystack import LowPolyHaystackFactory
-from infinigen.maquette.runtime.terrain import make_terrain
-# OR — when the prompt mixes biomes (grass + desert, forest + coast):
+# DEFAULT terrain helper: painterly Sky-CotL look (per-realm palette,
+# half-Lambert, crest highlights). See low-poly guide for full recipe.
+from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
+# Fallback A — single-style flat-shaded ground:
+# from infinigen.maquette.runtime.terrain import make_terrain
+# Fallback B — multi-biome flat-shaded zones:
 # from infinigen.maquette.runtime.terrain import make_multi_biome_terrain
-# OR — for SERIOUS terrain (dramatic peaks + river systems + image refs):
-# from infinigen.maquette.runtime.eroded_terrain import make_eroded_terrain
 
 rng = random.Random(<seed>)
 
 # 1. Wipe scene + create displaced ground. NEVER build it as a bare plane.
+# Default to make_eroded_terrain — painterly Sky-CotL look. See low-poly
+# guide for the full peaks/troughs recipe; minimal example below.
 for o in list(bpy.data.objects):
     bpy.data.objects.remove(o, do_unlink=True)
-terrain = make_terrain(
-    style="<flat|rolling|hilly|alpine|dunes>",
-    size=80,                                # half-width in BU; world 160 BU wide
-    base_color=(<R>, <G>, <B>, 1.0),
+terrain = make_eroded_terrain(
+    size=140,
     seed=<scene seed>,
+    peaks=[(60, 30, 22, 8.0), (-50, 60, 18, 4.5)],
+    troughs=[(-10, -10, 14, -3.2)],
+    plain_offset=2.4,
+    sea_level=0.5,
+    erode_iters=35,
+    palette_preset="<alpine|desert|wetland|volcanic|savanna|tundra|tropical>",
 )
-# Same multi-biome / eroded helpers are available — see low-poly guide
-# for parameter recipes. They are mode-agnostic.
+# If the prompt is a flat courtyard or buildings hide most of the
+# ground, the simpler `make_terrain(style=..., base_color=...)` works
+# too — it's flat-shaded so it lands generic but it's faster.
 
 # REALISTIC-MODE TERRAIN (when using make_eroded_terrain): turn on the
 # PBR shader + bake-for-export so the GLB ships actual textures
@@ -237,12 +246,9 @@ terrain = make_terrain(
 #    spawn_asset(i, loc) like upstream Infinigen.
 
 # 3. Camera + sun + world background — same recipes as low-poly mode.
-bpy.ops.object.camera_add(location=(<X>, <Y>, <Z>))
-cam = bpy.context.active_object
-target = Vector((<tx>, <ty>, <tz>))
-cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
-cam.data.lens = 35
-bpy.context.scene.camera = cam
+# Camera is auto-placed; do not call camera_add yourself.
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(composition, terrain_size=80)
 
 bpy.ops.object.light_add(type="SUN", location=(<X>, <Y>, <Z>))
 sun = bpy.context.active_object
@@ -333,12 +339,24 @@ Use the closest existing factory as a stand-in (e.g. RealisticBushFactory
 for shrubs, RealisticTreeFactory(archetype="winter") for dead trees) and
 CONTINUE building the scene. Do not refuse to build.
 
-### Camera framing
+### Camera framing — auto-placed
 
-Use `cam.data.lens = 35` for wide scene shots and `lens = 50` for tight
-prop shots. For an oblique-aerial scene view of a size=80 (160 BU wide)
-world, the camera at `(40, -44, 26)` looking at `(0, 0, 3)` frames the
-full scene cleanly. Scale linearly with terrain size if you change it.
+DO NOT author the camera. Call:
+
+```python
+from infinigen.maquette.runtime.camera import place_scene_camera
+place_scene_camera(composition, terrain_size=80, terrain=terrain)
+```
+
+ALWAYS pass `terrain=terrain` so the helper samples the actual height
+under the hero (otherwise a hero on a 12 BU peak gets cropped at the
+top of frame). The helper picks framing from your `Composition`:
+hero + water → camera past the lake looking at the hero, hero + ridge
+→ camera perpendicular to the ridge axis.
+
+DO NOT pass `lens_mm` — the 35 mm default is correct for almost every
+prompt. Override only for explicit 4+ hero panoramas (`lens_mm=28`).
+Never pass 50 mm; it crops the hero on tall terrain.
 
 ---
 

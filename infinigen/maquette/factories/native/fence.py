@@ -290,7 +290,10 @@ class LowPolyFenceFactory(AssetFactory):
         wall_color: str | None = None,
         accent_color: str | None = None,
         coarse: bool = False,
+        **_unused_kwargs,
     ):
+        from infinigen.maquette.factory_kwargs_compat import accept_unused_kwargs
+        accept_unused_kwargs("LowPolyFenceFactory", _unused_kwargs)
         super().__init__(factory_seed, coarse=coarse)
         if fence_archetype not in _FENCE_ARCHETYPES:
             # Lenient fallback rather than crash. Sonnet has been

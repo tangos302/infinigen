@@ -140,6 +140,18 @@ _PALETTE_PRESETS: dict[str, dict[str, PaletteRGB]] = {
         "alpine":  (0.54, 0.58, 0.52),  # cool damp rock
         "snow":    (0.86, 0.90, 0.90),  # rare; soft cream-blue
     },
+    "temperate": {
+        # Ordinary settlement/meadow terrain. Deliberately less yellow than
+        # savanna and less saturated than wetland, so medieval towns read as
+        # grass/dirt/stone instead of dry grassland or neon moss.
+        "lakebed": (0.34, 0.40, 0.35),
+        "shore":   (0.66, 0.58, 0.42),  # dirt paths / worn bank
+        "meadow":  (0.44, 0.62, 0.34),  # readable pasture green
+        "forest":  (0.22, 0.38, 0.21),  # dark hedgerow / forest edge
+        "stone":   (0.55, 0.52, 0.45),  # warm grey stone
+        "alpine":  (0.66, 0.64, 0.58),
+        "snow":    (0.88, 0.86, 0.78),
+    },
     "volcanic": {
         # Sky CotL Wasteland Battlefield / Eye of Eden reference — charcoal
         # obsidian with ember-orange accents and deep slate-purple shadow.
@@ -990,6 +1002,11 @@ def _apply_stylised_passes(elev, col, palette, *, seed: int = 0, dunes: bool = F
         # sun-warmed, not just brighter.
         cool_shadow = np.array([0.70, 0.84, 0.82], dtype=np.float32)
         warm_lit    = np.array([1.16, 1.08, 0.84], dtype=np.float32)
+    elif palette_name == "temperate":
+        # Temperate settlements: warm light, but keep enough blue in the
+        # lit side that grass does not collapse into olive/yellow.
+        cool_shadow = np.array([0.84, 0.88, 0.94], dtype=np.float32)
+        warm_lit    = np.array([1.10, 1.05, 0.96], dtype=np.float32)
     elif palette_name == "tundra":
         # Sky CotL Sanctuary peaks / Aviary cloud-edge — pale lavender-blue
         # shadow (not hard cold blue), warm cream-gold lit. The previous

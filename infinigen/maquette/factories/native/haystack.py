@@ -17,7 +17,7 @@ askew haystacks read as "in use" rather than ornamental.
 
 Material slots:
   slot 0 = hay body                 (default `foliage_lemon` — straw)
-  slot 1 = cap / pole tip           (default same as body, optional)
+  slot 1 = binding / shadow detail  (default `wood`, optional)
 """
 
 from __future__ import annotations
@@ -48,23 +48,97 @@ _ARCHETYPE_DEFAULTS = {
     "cone": dict(
         height=1.8, radius=1.2,
         top_offset=(0.0, 0.0),
-        hay_color="foliage_lemon", cap_color="foliage_lemon",
+        detail_bands=True,
+        hay_color="foliage_lemon", cap_color="wood",
     ),
     "rounded_mound": dict(
         height=1.4, radius=1.3,
         top_offset=(0.15, 0.0),  # slight lean
-        hay_color="foliage_lemon", cap_color="foliage_lemon",
+        detail_bands=True,
+        hay_color="foliage_lemon", cap_color="foliage_amber",
     ),
     "stacked_disks": dict(
         height=2.0, radius=1.4,
         top_offset=(0.0, 0.0),
-        hay_color="foliage_lemon", cap_color="foliage_lemon",
+        detail_bands=True,
+        hay_color="foliage_lemon", cap_color="wood",
     ),
 }
 
 
 def _bm_face_count(bm) -> int:
     return len(bm.faces)
+
+
+def _add_box(
+    bm,
+    cx: float, cy: float, cz: float,
+    sx: float, sy: float, sz: float,
+) -> int:
+    n_before = _bm_face_count(bm)
+    hx, hy, hz = sx / 2, sy / 2, sz / 2
+    b00 = bm.verts.new((cx - hx, cy - hy, cz - hz))
+    b10 = bm.verts.new((cx + hx, cy - hy, cz - hz))
+    b11 = bm.verts.new((cx + hx, cy + hy, cz - hz))
+    b01 = bm.verts.new((cx - hx, cy + hy, cz - hz))
+    t00 = bm.verts.new((cx - hx, cy - hy, cz + hz))
+    t10 = bm.verts.new((cx + hx, cy - hy, cz + hz))
+    t11 = bm.verts.new((cx + hx, cy + hy, cz + hz))
+    t01 = bm.verts.new((cx - hx, cy + hy, cz + hz))
+    bm.verts.ensure_lookup_table()
+    bm.faces.new((b00, b10, t10, t00))
+    bm.faces.new((b10, b11, t11, t10))
+    bm.faces.new((b11, b01, t01, t11))
+    bm.faces.new((b01, b00, t00, t01))
+    bm.faces.new((t00, t10, t11, t01))
+    bm.faces.new((b00, b01, b11, b10))
+    return _bm_face_count(bm) - n_before
+
+
+def _add_box_slot(
+    bm,
+    slot_ranges: list[tuple[int, int, int]],
+    slot: int,
+    cx: float, cy: float, cz: float,
+    sx: float, sy: float, sz: float,
+) -> None:
+    start = _bm_face_count(bm)
+    _add_box(bm, cx, cy, cz, sx, sy, sz)
+    end = _bm_face_count(bm)
+    slot_ranges.append((start, end, slot))
+
+
+def _add_binding_details(
+    bm,
+    slot_ranges: list[tuple[int, int, int]],
+    radius: float,
+    height: float,
+) -> None:
+    """Small tied bands and fallen straw strips.
+
+    These are intentionally boxy so they survive distant isometric renders;
+    they turn a pure cone/mound into an authored farm prop without adding
+    expensive curved geometry.
+    """
+    band_h = max(0.035, height * 0.035)
+    band_t = max(0.035, radius * 0.035)
+    for t in (0.34, 0.58):
+        z = height * t
+        span = radius * (1.62 - 0.55 * t)
+        offset = radius * (0.33 - 0.12 * t)
+        _add_box_slot(bm, slot_ranges, 1, 0.0, offset, z, span, band_t, band_h)
+        _add_box_slot(bm, slot_ranges, 1, 0.0, -offset, z + band_h * 0.7, span * 0.78, band_t, band_h)
+
+    # A few short straw flecks around the base. Body slot, slightly raised.
+    for i, angle in enumerate((0.25, 1.55, 2.75, 4.15)):
+        r = radius * (0.72 + 0.08 * (i % 2))
+        x = r * math.cos(angle)
+        y = r * math.sin(angle)
+        _add_box_slot(
+            bm, slot_ranges, 0,
+            x, y, band_h * 0.45,
+            radius * 0.42, band_t * 0.7, band_h * 0.7,
+        )
 
 
 def _add_cone(
@@ -222,6 +296,7 @@ class LowPolyHaystackFactory(AssetFactory):
         n_sides: int | None = None,
         n_layers: int | None = None,
         top_offset: tuple[float, float] | None = None,
+        detail_bands: bool | None = None,
         hay_color: str | None = None,
         cap_color: str | None = None,
         coarse: bool = False,
@@ -263,6 +338,9 @@ class LowPolyHaystackFactory(AssetFactory):
         )
         offset = top_offset if top_offset is not None else d["top_offset"]
         self.top_offset = (float(offset[0]), float(offset[1]))
+        self.detail_bands = (
+            bool(detail_bands) if detail_bands is not None else bool(d["detail_bands"])
+        )
         self.hay_color = hay_color or d["hay_color"]
         self.cap_color = cap_color or d["cap_color"]
 
@@ -278,6 +356,7 @@ class LowPolyHaystackFactory(AssetFactory):
 
     def _build(self) -> bpy.types.Object:
         bm = bmesh.new()
+        slot_ranges: list[tuple[int, int, int]] = []
 
         if self.haystack_archetype == "cone":
             _add_cone(
@@ -298,6 +377,9 @@ class LowPolyHaystackFactory(AssetFactory):
         else:
             raise AssertionError(self.haystack_archetype)
 
+        if self.detail_bands:
+            _add_binding_details(bm, slot_ranges, self.radius, self.height)
+
         me = bpy.data.meshes.new(f"LowPolyHaystack({self.factory_seed})_Mesh")
         bm.to_mesh(me)
         bm.free()
@@ -309,6 +391,10 @@ class LowPolyHaystackFactory(AssetFactory):
         # cap_color independently without rebuilding.
         while len(obj.data.materials) < 2:
             obj.data.materials.append(None)
+
+        for start, end, slot in slot_ranges:
+            for i in range(start, end):
+                obj.data.polygons[i].material_index = slot
 
         for p in obj.data.polygons:
             p.use_smooth = False

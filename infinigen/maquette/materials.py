@@ -54,6 +54,43 @@ def _get_or_create_palette_material(palette_key: str) -> bpy.types.Material:
     return mat
 
 
+def _get_or_create_emission_material(
+    palette_key: str,
+    *,
+    strength: float = 3.0,
+) -> bpy.types.Material:
+    """Return a reusable warm emission material for visible light parts.
+
+    This is intentionally still palette-driven. Factories can make a flame,
+    lantern pane, or beacon read as bright without inventing arbitrary hex
+    colours outside the Maquette look.
+    """
+    if palette_key not in MAQUETTE_PALETTE:
+        raise KeyError(f"unknown palette key {palette_key!r}; valid: {list(MAQUETTE_PALETTE)}")
+    safe_strength = max(0.0, float(strength))
+    name = f"{_MATERIAL_PREFIX}Emission_{palette_key}_{safe_strength:g}"
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    colour = hex_to_rgba(MAQUETTE_PALETTE[palette_key])
+    bsdf.inputs["Base Color"].default_value = colour
+    bsdf.inputs["Roughness"].default_value = 0.48
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["IOR"].default_value = 1.45
+    if "Emission Color" in bsdf.inputs:
+        bsdf.inputs["Emission Color"].default_value = colour
+    if "Emission Strength" in bsdf.inputs:
+        bsdf.inputs["Emission Strength"].default_value = safe_strength
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
 def apply_palette(obj: bpy.types.Object, palette_key: str) -> bpy.types.Object:
     """Replace all materials on `obj` with the Maquette palette material
     named `palette_key`. Idempotent — calling repeatedly with the same key
@@ -69,6 +106,53 @@ def apply_palette(obj: bpy.types.Object, palette_key: str) -> bpy.types.Object:
     obj.data.materials.clear()
     obj.data.materials.append(mat)
     return obj
+
+
+def apply_emission_palette_slot(
+    obj: bpy.types.Object,
+    slot_index: int,
+    palette_key: str,
+    *,
+    strength: float = 3.0,
+) -> bpy.types.Object:
+    """Replace one material slot with a palette emission material."""
+    if obj.type != "MESH":
+        return obj
+    mat = _get_or_create_emission_material(palette_key, strength=strength)
+    while len(obj.data.materials) <= int(slot_index):
+        obj.data.materials.append(None)
+    obj.data.materials[int(slot_index)] = mat
+    return obj
+
+
+def add_palette_point_light(
+    *,
+    name: str,
+    location: tuple[float, float, float],
+    palette_key: str,
+    energy: float,
+    radius: float,
+    parent: bpy.types.Object | None = None,
+) -> bpy.types.Object:
+    """Create a small point light tied to a palette colour.
+
+    Factories parent these lights to their mesh object. Runtime template
+    copies can duplicate child lights as needed, so a lantern copied along
+    a path remains a real light source.
+    """
+    if palette_key not in MAQUETTE_PALETTE:
+        raise KeyError(f"unknown palette key {palette_key!r}; valid: {list(MAQUETTE_PALETTE)}")
+    rgba = hex_to_rgba(MAQUETTE_PALETTE[palette_key])
+    data = bpy.data.lights.new(name, "POINT")
+    data.color = (rgba[0], rgba[1], rgba[2])
+    data.energy = max(0.0, float(energy))
+    data.shadow_soft_size = max(0.01, float(radius))
+    light = bpy.data.objects.new(name, data)
+    bpy.context.scene.collection.objects.link(light)
+    light.location = tuple(float(v) for v in location)
+    if parent is not None:
+        light.parent = parent
+    return light
 
 
 _SNOW_ROCK_MAT_PREFIX = "Maquette_snow_rock_"

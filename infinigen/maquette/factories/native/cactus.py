@@ -13,6 +13,9 @@ Archetypes:
                off the upper trunk. No flower crown by default.
   barrel     — short fat ribbed cylinder ~1 m, no arms, flower crown
                on by default.
+  column_cactus — tall slim single ribbed column ~3 m, no arms; a
+               cereus / organ-pipe stem with a small flower crown.
+  branching  — a big old saguaro ~5 m carrying four upward-curving arms.
 
 Build approach: ribbed n-sided column built via stacked rings whose
 radii alternate per side index (even sides at full radius, odd sides
@@ -43,7 +46,7 @@ from ...density import n_along_axis, n_sides_for_radius, target_edge_for_bbox
 from ...materials import apply_palette_slots
 
 
-_CACTUS_ARCHETYPES = ("saguaro", "barrel")
+_CACTUS_ARCHETYPES = ("saguaro", "barrel", "column_cactus", "branching")
 
 
 # n_sides + n_layers are bbox-derived. Defaults are dimensional only.
@@ -79,6 +82,38 @@ _ARCHETYPE_DEFAULTS = {
         arm_z_fraction_range=(0.0, 0.0),
         has_flower=True,
         flower_radius_fraction=0.55,
+        body_color="foliage_bush",
+        flower_color="accent_red",
+    ),
+    "column_cactus": dict(
+        height=3.2,
+        base_radius=0.22,
+        top_radius=0.18,
+        rib_amplitude=0.12,
+        dome_segments=2,
+        n_arms=0,
+        arm_radius_fraction=0.0,
+        arm_horizontal_extent=0.0,
+        arm_vertical_extent=0.0,
+        arm_z_fraction_range=(0.0, 0.0),
+        has_flower=True,
+        flower_radius_fraction=0.40,
+        body_color="foliage_bush",
+        flower_color="accent_red",
+    ),
+    "branching": dict(
+        height=4.8,
+        base_radius=0.52,
+        top_radius=0.44,
+        rib_amplitude=0.10,
+        dome_segments=2,
+        n_arms=4,
+        arm_radius_fraction=0.50,
+        arm_horizontal_extent=0.80,
+        arm_vertical_extent=1.6,
+        arm_z_fraction_range=(0.40, 0.80),
+        has_flower=False,
+        flower_radius_fraction=0.35,
         body_color="foliage_bush",
         flower_color="accent_red",
     ),

@@ -25,6 +25,7 @@ Material slots:
 from __future__ import annotations
 
 import math
+import random
 
 import bmesh
 import bpy
@@ -40,31 +41,37 @@ _STALL_ARCHETYPES = ("open", "closed_back", "double")
 
 _ARCHETYPE_DEFAULTS = {
     "open": dict(
-        length=1.8, width=1.1,
-        post_height=2.0, post_radius=0.04,
-        awning_pitch=0.3, awning_overhang=0.18,
+        length=2.25, width=1.35,
+        post_height=2.15, post_radius=0.055,
+        awning_pitch=0.34, awning_overhang=0.25,
         has_table=True, table_height=0.85, table_thickness=0.05,
         has_back_wall=False, back_wall_height=0.0,
+        goods_count=5,
         is_double=False,
         frame_color="wood", awning_color="accent_red", table_color="wood",
+        goods_color="foliage_amber",
     ),
     "closed_back": dict(
-        length=1.8, width=1.1,
-        post_height=2.0, post_radius=0.04,
-        awning_pitch=0.3, awning_overhang=0.18,
+        length=2.25, width=1.35,
+        post_height=2.15, post_radius=0.055,
+        awning_pitch=0.34, awning_overhang=0.25,
         has_table=True, table_height=0.85, table_thickness=0.05,
         has_back_wall=True, back_wall_height=1.7,
+        goods_count=4,
         is_double=False,
         frame_color="wood", awning_color="foliage_amber", table_color="wood",
+        goods_color="ground_sand",
     ),
     "double": dict(
-        length=3.4, width=1.1,
-        post_height=2.0, post_radius=0.04,
-        awning_pitch=0.3, awning_overhang=0.20,
+        length=4.0, width=1.35,
+        post_height=2.15, post_radius=0.055,
+        awning_pitch=0.34, awning_overhang=0.28,
         has_table=True, table_height=0.85, table_thickness=0.05,
         has_back_wall=False, back_wall_height=0.0,
+        goods_count=8,
         is_double=True,
         frame_color="wood", awning_color="foliage_apple", table_color="wood",
+        goods_color="foliage_lemon",
     ),
 }
 
@@ -150,6 +157,7 @@ class LowPolyStallFactory(AssetFactory):
         frame_color     : str    slot 0
         awning_color    : str    slot 1
         table_color     : str    slot 2 (table + back wall)
+        goods_color     : str    slot 3 (visible table goods + signs)
     """
 
     def __init__(
@@ -167,11 +175,16 @@ class LowPolyStallFactory(AssetFactory):
         table_thickness: float | None = None,
         has_back_wall: bool | None = None,
         back_wall_height: float | None = None,
+        goods_count: int | None = None,
         frame_color: str | None = None,
         awning_color: str | None = None,
         table_color: str | None = None,
+        goods_color: str | None = None,
         coarse: bool = False,
+        **_unused_kwargs,
     ):
+        from infinigen.maquette.factory_kwargs_compat import accept_unused_kwargs
+        accept_unused_kwargs("LowPolyStallFactory", _unused_kwargs)
         super().__init__(factory_seed, coarse=coarse)
         if stall_archetype not in _STALL_ARCHETYPES:
             # Lenient fallback rather than crash. Sonnet has been
@@ -205,10 +218,12 @@ class LowPolyStallFactory(AssetFactory):
             bool(has_back_wall) if has_back_wall is not None else d["has_back_wall"]
         )
         self.back_wall_height = float(back_wall_height if back_wall_height is not None else d["back_wall_height"])
+        self.goods_count = int(goods_count if goods_count is not None else d["goods_count"])
         self.is_double = bool(d["is_double"])
         self.frame_color = frame_color or d["frame_color"]
         self.awning_color = awning_color or d["awning_color"]
         self.table_color = table_color or d["table_color"]
+        self.goods_color = goods_color or d["goods_color"]
 
     def create_placeholder(self, **kwargs) -> bpy.types.Object:
         ph = bpy.data.objects.new(
@@ -221,6 +236,7 @@ class LowPolyStallFactory(AssetFactory):
         return self._build()
 
     def _build(self) -> bpy.types.Object:
+        rng = random.Random(self.factory_seed)
         bm = bmesh.new()
         slot_ranges: list[tuple[int, int, int]] = []
 
@@ -246,6 +262,28 @@ class LowPolyStallFactory(AssetFactory):
             L, W, front_z, back_z, self.awning_overhang,
         )
 
+        # Chunky front valance blocks make the canopy visible from the
+        # default high camera and keep it from reading as a single paper face.
+        valance_y = -W / 2 - self.awning_overhang + 0.03
+        valance_z = front_z - 0.12
+        valance_count = 4 if self.is_double else 3
+        valance_step = L / valance_count
+        for i in range(valance_count):
+            cx = -L / 2 + valance_step * (i + 0.5)
+            _add_box_slot(
+                bm, slot_ranges, 1,
+                cx, valance_y, valance_z,
+                valance_step * 0.72, 0.055, 0.22,
+            )
+
+        # Upper wooden rails tie the posts together and improve the silhouette
+        # when the stall is seen from a distance.
+        rail_z = H - 0.18
+        _add_box_slot(bm, slot_ranges, 0, 0.0, -W / 2 + pr, rail_z, L, ps, ps)
+        _add_box_slot(bm, slot_ranges, 0, 0.0, +W / 2 - pr, rail_z, L, ps, ps)
+        _add_box_slot(bm, slot_ranges, 0, -L / 2 + pr, 0.0, rail_z, ps, W, ps)
+        _add_box_slot(bm, slot_ranges, 0, +L / 2 - pr, 0.0, rail_z, ps, W, ps)
+
         # Table — flat surface inside the stall
         if self.has_table:
             tz = self.table_height
@@ -254,6 +292,17 @@ class LowPolyStallFactory(AssetFactory):
                 0, 0, tz + self.table_thickness / 2,
                 L - 2 * pr, W - 2 * pr, self.table_thickness,
             )
+            for _ in range(max(0, self.goods_count)):
+                gx = rng.uniform(-L * 0.36, L * 0.36)
+                gy = rng.uniform(-W * 0.22, W * 0.22)
+                gs = rng.uniform(0.10, 0.18)
+                _add_box_slot(
+                    bm, slot_ranges, 3,
+                    gx, gy, tz + self.table_thickness + gs * 0.5,
+                    gs * rng.uniform(1.0, 1.8),
+                    gs * rng.uniform(0.9, 1.4),
+                    gs * rng.uniform(0.7, 1.6),
+                )
 
         # Back wall — vertical panel along the back edge (+Y)
         if self.has_back_wall and self.back_wall_height > 0:
@@ -271,7 +320,7 @@ class LowPolyStallFactory(AssetFactory):
         obj = bpy.data.objects.new(f"LowPolyStall({self.factory_seed})", me)
         bpy.context.scene.collection.objects.link(obj)
 
-        while len(obj.data.materials) < 3:
+        while len(obj.data.materials) < 4:
             obj.data.materials.append(None)
 
         for start, end, slot in slot_ranges:
@@ -282,6 +331,6 @@ class LowPolyStallFactory(AssetFactory):
             p.use_smooth = False
 
         apply_palette_slots(
-            obj, [self.frame_color, self.awning_color, self.table_color]
+            obj, [self.frame_color, self.awning_color, self.table_color, self.goods_color]
         )
         return obj
