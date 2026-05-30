@@ -2302,6 +2302,7 @@ def _make_visual_density_filler(
     regions: TerrainRegions,
     reserved_footprints: list[tuple[float, float, float, str]] | None = None,
     settlement_layout_factory=None,
+    sea_level: float | None = None,
 ):
     def fill_visual_density(
         *,
@@ -2971,8 +2972,20 @@ def _make_visual_density_filler(
 
         def is_dry(x: float, y: float, *, water_buffer: float = 1.0) -> bool:
             role = str(sample_role(float(x), float(y)) or "").lower()
-            if "water" in role:
+            if "water" in role or "basin_floor" in role or "shore" in role:
                 return False
+            # Oceanic / archipelago scenes: the basin_floor region only covers
+            # 65-75 % of playable, but sea_level still floods every point whose
+            # sampled terrain z is below it (including the outer "base" strip
+            # outside the explicit basin_floor polygon). Without this check,
+            # broad scatter happily lands trees under water on those margins.
+            if sea_level is not None:
+                try:
+                    z_here = float(height_at(float(x), float(y)))
+                except Exception:  # noqa: BLE001
+                    z_here = None
+                if z_here is not None and z_here < sea_level - 0.10:
+                    return False
             if primary_water is not None:
                 d = math.hypot(float(x) - primary_water.x, float(y) - primary_water.y)
                 if d < primary_water.radius + water_buffer:
@@ -8070,6 +8083,7 @@ def make_strata_terrain(
         regions=regions,
         reserved_footprints=reserved_footprints,
         settlement_layout_factory=settlement_layout,
+        sea_level=sea_level,
     )
     terrain.write_object_budget_report = _make_object_budget_writer(terrain.object_budget)
     terrain.strata_dir = str(root)
