@@ -1538,3 +1538,12 @@ class LowPolyHouseFactory(AssetFactory):
                 parent=obj,
             )
         return obj
+
+
+# Compatibility re-export. LLM-generated build scripts sometimes write
+# ``from infinigen.maquette.factories.native.building import LowPolyChapelFactory``
+# because the model conflates "chapel" with the generic "building" module —
+# the canonical class lives in ``factories.native.chapel``. Keep that path
+# working so a good scene does not crash before Blender even starts (same
+# pattern as ``factories/boat.py`` and ``factories/wagon.py`` compat shims).
+from infinigen.maquette.factories.native.chapel import LowPolyChapelFactory  # noqa: E402

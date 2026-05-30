@@ -581,6 +581,9 @@ LowPolyCactusFactory — saguaro / barrel cactus.
 
 **cactus** archetypes: `saguaro` / `barrel` / `column_cactus` / `branching`
 
+**Named presets:** `barrel_cactus` / `column_cactus` / `desert_saguaro` / `old_saguaro`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -1100,6 +1103,9 @@ LowPolyPathFactory — path, road, and stair segments.
 
 **path** archetypes: `dirt_path` / `cobbled_road` / `stone_steps` / `gravel_lane`
 
+**Named presets:** `cobbled_street` / `garden_steps` / `gravel_track` / `village_path`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -1361,7 +1367,7 @@ LowPolyStoneLanternFactory — Japanese stone lantern (tōrō).
 
 **lantern** archetypes: `tachi_gata` / `yukimi_gata` / `kasuga` / `oki_gata`
 
-**Named presets:** `ash_temple` / `formal_avenue` / `moss_garden` / `snow_garden`
+**Named presets:** `ash_temple` / `formal_avenue` / `kasuga_avenue` / `moss_garden` / `oki_garden` / `snow_garden`
 Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
 
 **Constructor parameters:**
@@ -1539,7 +1545,7 @@ LowPolyTownBlockFactory — compact multi-building street block.
 
 **town_block** archetypes: `market_row` / `stacked_tenement` / `workshop_courtyard` / `stepped_hillside` / `mudbrick_bazaar` / `coastal_row` / `alpine_chalet_row`
 
-**Named presets:** `busy_market_row` / `stacked_townhouses` / `stepped_hillside_row` / `workshop_court`
+**Named presets:** `alpine_chalet_row` / `busy_market_row` / `coastal_clapboard_row` / `mudbrick_bazaar_row` / `stacked_townhouses` / `stepped_hillside_row` / `workshop_court`
 Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
 
 **Constructor parameters:**
