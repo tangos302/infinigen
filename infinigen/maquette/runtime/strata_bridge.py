@@ -5792,6 +5792,27 @@ def make_strata_terrain(
             prototype_kinds.extend(["cactus", "palm"])
         else:
             prototype_kinds.append("tree")
+
+        # Resolve the settlement archetype BEFORE building prototypes.
+        # make_proto()'s house branch reads ``settlement_archetype_runtime``
+        # as a closure free variable, so it must be bound before the loop
+        # below calls make_proto("house", ...). It was previously assigned
+        # ~30 lines later, which made every house prototype fail with
+        # "cannot access free variable 'settlement_archetype_runtime'" →
+        # zero houses → market/town scenes always failed the settlement
+        # composition gate.
+        layout_for_plaza = (plan or {}).get("layout")
+        settlement_kind_str = str(
+            getattr(layout_for_plaza, "kind", "market_town") or "market_town"
+        ).lower()
+        settlement_archetype_runtime = str(
+            (getattr(layout_for_plaza, "_strata_resolution", {}) or {}).get("settlement_archetype")
+            or _settlement_archetype_for_kind(
+                settlement_kind_str,
+                prompt=os.environ.get("SONGE_MAQUETTE_USER_PROMPT", ""),
+            )
+        ).lower()
+
         prototypes: dict[str, list[Any]] = {}
         for kind in prototype_kinds:
             prototypes[kind] = []
@@ -5824,18 +5845,6 @@ def make_strata_terrain(
             "missing_factory_rejects": 0,
         }
         placed_positions: list[tuple[str, str, float, float]] = []
-
-        layout_for_plaza = (plan or {}).get("layout")
-        settlement_kind_str = str(
-            getattr(layout_for_plaza, "kind", "market_town") or "market_town"
-        ).lower()
-        settlement_archetype_runtime = str(
-            (getattr(layout_for_plaza, "_strata_resolution", {}) or {}).get("settlement_archetype")
-            or _settlement_archetype_for_kind(
-                settlement_kind_str,
-                prompt=os.environ.get("SONGE_MAQUETTE_USER_PROMPT", ""),
-            )
-        ).lower()
 
         # ---- Batch 2: authoritative castle compound -------------------
         # Castle outposts need a recognisable silhouette, not just generic
