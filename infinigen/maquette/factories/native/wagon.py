@@ -110,38 +110,48 @@ def _add_wheel(
     cx, cy, cz,
     radius, thickness, n_sides,
 ) -> None:
-    """A wheel built as a flat n-sided cylinder centered at (cx, cy, cz)
-    with axis along Y. A small box at the center stands in for the hub /
-    axle protrusion (slotted to the wood color so it reads as separate
-    from the iron rim)."""
+    """A spoked wheel with axis along Y: an open rim ring (outer + inner
+    band with side rings), two crossing spoke bars, and a proud hub box.
+    Solid-disc wheels read as drums; the open ring + spokes is what makes
+    a cart read as a cart."""
     start = _bm_face_count(bm)
     y0 = cy - thickness / 2
     y1 = cy + thickness / 2
-    ring_y0 = []
-    ring_y1 = []
+    inner_r = radius * 0.74
+    outer0, outer1, inner0, inner1 = [], [], [], []
     for s in range(n_sides):
         a = 2 * math.pi * s / n_sides
-        x = cx + radius * math.cos(a)
-        z = cz + radius * math.sin(a)
-        ring_y0.append(bm.verts.new((x, y0, z)))
-        ring_y1.append(bm.verts.new((x, y1, z)))
+        ox = cx + radius * math.cos(a)
+        oz = cz + radius * math.sin(a)
+        ix = cx + inner_r * math.cos(a)
+        iz = cz + inner_r * math.sin(a)
+        outer0.append(bm.verts.new((ox, y0, oz)))
+        outer1.append(bm.verts.new((ox, y1, oz)))
+        inner0.append(bm.verts.new((ix, y0, iz)))
+        inner1.append(bm.verts.new((ix, y1, iz)))
     bm.verts.ensure_lookup_table()
     for s in range(n_sides):
         ns = (s + 1) % n_sides
-        bm.faces.new((ring_y0[s], ring_y0[ns], ring_y1[ns], ring_y1[s]))
-    # End caps — the -Y face wants its normal pointing -Y, so reverse
-    # the CCW (viewed from +Y) ring; the +Y face takes the original order.
-    bm.faces.new(list(reversed(ring_y0)))
-    bm.faces.new(ring_y1)
+        # Tread (outer band) + inner band + the two side rings.
+        bm.faces.new((outer0[s], outer0[ns], outer1[ns], outer1[s]))
+        bm.faces.new((inner1[s], inner1[ns], inner0[ns], inner0[s]))
+        bm.faces.new((outer0[ns], outer0[s], inner0[s], inner0[ns]))
+        bm.faces.new((outer1[s], outer1[ns], inner1[ns], inner1[s]))
     end = _bm_face_count(bm)
     slot_ranges.append((start, end, rim_slot))
 
-    # Hub box — slightly proud of the wheel face for an axle cue.
-    hub_size = radius * 0.35
+    # Two crossing spoke bars (reads as 4 spokes) + proud hub box.
+    spoke_t = max(0.045, radius * 0.16)
+    spoke_y = thickness * 0.72
+    _add_box_slot(bm, slot_ranges, hub_slot,
+                  cx, cy, cz, (inner_r + 0.02) * 2, spoke_y, spoke_t)
+    _add_box_slot(bm, slot_ranges, hub_slot,
+                  cx, cy, cz, spoke_t, spoke_y, (inner_r + 0.02) * 2)
+    hub_size = radius * 0.32
     _add_box_slot(
         bm, slot_ranges, hub_slot,
         cx, cy, cz,
-        hub_size, thickness * 1.6, hub_size,
+        hub_size, thickness * 1.7, hub_size,
     )
 
 

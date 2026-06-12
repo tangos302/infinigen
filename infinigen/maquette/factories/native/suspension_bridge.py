@@ -291,11 +291,15 @@ class LowPolySuspensionBridgeFactory(AssetFactory):
                 plank_w_along, W, self.deck_thickness,
             )
 
-        # Side rope rails — at deck level along ±Y. Sit slightly above
-        # the deck top so they read as a hand-rail rather than the deck
-        # edge. End z stays at deck_top_z + offset; sag matches deck.
-        rail_offset = max(self.rope_size * 0.6, 0.04)
+        # Side ropes. Walkway bridges (rope_plank / chain_walk) get a
+        # proper HANDRAIL at hand height with vertical lacing down to the
+        # deck — the iconic rope-bridge profile. The cable archetype keeps
+        # low deck-edge ropes; its silhouette comes from towers + cables.
         rail_y = W / 2 + self.rope_size / 2
+        if self.has_towers:
+            rail_offset = max(self.rope_size * 0.6, 0.04)
+        else:
+            rail_offset = 0.78
         for sign in (-1, 1):
             _add_rope(
                 bm, slot_ranges, 1,
@@ -304,6 +308,31 @@ class LowPolySuspensionBridgeFactory(AssetFactory):
                 self.sag,
                 self.n_rope_segments, self.rope_size,
             )
+        if not self.has_towers:
+            # Vertical lacing between deck edge and handrail.
+            n_lace = max(4, self.n_planks // 2)
+            for i in range(1, n_lace):
+                t = i / n_lace
+                x = -L / 2 + L * t
+                z_off = _sag_z(t, self.sag)
+                lo = deck_top_z + z_off
+                hi = deck_top_z + rail_offset + z_off
+                for sign in (-1, 1):
+                    _add_box_slot(
+                        bm, slot_ranges, 1,
+                        x, sign * rail_y, (lo + hi) / 2,
+                        0.028, 0.028, hi - lo,
+                    )
+            # Anchor posts at both ends carry the rails into the ground.
+            for x_sign in (-1, 1):
+                for y_sign in (-1, 1):
+                    _add_box_slot(
+                        bm, slot_ranges, 2,
+                        x_sign * (L / 2 + 0.06), y_sign * rail_y,
+                        (deck_top_z + rail_offset + 0.12 - 0.25) / 2,
+                        0.13, 0.13,
+                        deck_top_z + rail_offset + 0.12 + 0.25,
+                    )
 
         # Towers — paired square posts at each end (one per ±Y corner).
         if self.has_towers and self.tower_height > 0 and self.tower_size > 0:
@@ -355,6 +384,14 @@ class LowPolySuspensionBridgeFactory(AssetFactory):
                         x, sign * cable_y, cz,
                         sus_size, sus_size, sz,
                     )
+
+        # Lift the whole build so the sag bottom rests on z=0. Build scripts
+        # that span a gap can sink it as needed; ground placements (and the
+        # preview camera) get a visible bridge instead of one buried in the
+        # floor.
+        z_lift = self.sag + self.deck_thickness + (0.25 if not self.has_towers else 0.0)
+        for v in bm.verts:
+            v.co.z += z_lift
 
         me = bpy.data.meshes.new(
             f"LowPolySuspensionBridge({self.factory_seed})_Mesh"

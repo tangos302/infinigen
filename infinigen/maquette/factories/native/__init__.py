@@ -75,6 +75,7 @@ from .volcanic_rock import LowPolyVolcanicRockFactory
 from .wagon import LowPolyWagonFactory
 from .watchtower import LowPolyWatchtowerFactory
 from .water_surface import LowPolyWaterSurfaceFactory
+from .water_tower import LowPolyWaterTowerFactory
 from .waterfall import LowPolyWaterfallFactory
 from .watermill import LowPolyWatermillFactory
 from .well import LowPolyWellFactory
@@ -137,6 +138,7 @@ __all__ = [
     "LowPolyWagonFactory",
     "LowPolyWatchtowerFactory",
     "LowPolyWaterSurfaceFactory",
+    "LowPolyWaterTowerFactory",
     "LowPolyWaterfallFactory",
     "LowPolyWatermillFactory",
     "LowPolyWellFactory",

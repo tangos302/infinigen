@@ -655,12 +655,15 @@ HOUSE_PRESETS: FactoryPresets = {
 BOULDER_PRESETS: FactoryPresets = {
     "charred": dict(
         polygon_multiplier=1.0,
+        palette_color="rock_shadow",                      # burnt / dark oxide
     ),
     "mossy": dict(
         polygon_multiplier=1.2,                           # slightly rounder
+        palette_color="foliage_bush",                     # olive moss coat
     ),
     "bleached": dict(
         polygon_multiplier=0.9,                           # blockier, weathered
+        palette_color="rock_pale",                        # sun-bleached bone
     ),
 }
 
@@ -1326,6 +1329,200 @@ LOADED_TREE_PRESETS: FactoryPresets = {
 }
 
 
+# Windmill — Forge v2 rebuild: smock/stone towers with lattice-and-cloth
+# sails, truss windpump with tail vane. Variation: archetype x colour story.
+WINDMILL_PRESETS: FactoryPresets = {
+    "dutch_grain": dict(
+        windmill_archetype="dutch",
+        tower_color="rock_pale", roof_color="rock_shadow", sail_color="stucco",
+    ),
+    "harbor_red_cap": dict(
+        windmill_archetype="dutch",
+        tower_color="stucco", roof_color="accent_red", sail_color="stucco",
+    ),
+    "old_stone_mill": dict(
+        windmill_archetype="stone_mill",
+        tower_color="rock_cool", blade_color="rock_shadow", sail_color="rock_pale",
+    ),
+    "desert_mill": dict(
+        windmill_archetype="stone_mill",
+        tower_color="rock_warm", roof_color="rock_shadow", sail_color="foliage_amber",
+    ),
+    "prairie_pump": dict(
+        windmill_archetype="western_pump",
+    ),
+}
+
+# Boat — lofted hull with sheer + chine. Variation: working boats vs the
+# two-masted brig; ghost variant for spooky coves.
+BOAT_PRESETS: FactoryPresets = {
+    "harbor_rowboat": dict(
+        boat_archetype="rowboat",
+    ),
+    "beached_dinghy": dict(
+        boat_archetype="dinghy",
+    ),
+    "village_fishing_skiff": dict(
+        boat_archetype="fishing_skiff",
+    ),
+    "pirate_brig": dict(
+        boat_archetype="pirate_brig",
+    ),
+    "ghost_ship": dict(
+        boat_archetype="pirate_brig",
+        hull_color="rock_cool", trim_color="rock_shadow",
+        sail_color="sky_cool", accent_color="foliage_mint",
+    ),
+}
+
+# Market stall — striped scalloped awnings. Variation: trade theme via
+# awning + goods colours.
+STALL_PRESETS: FactoryPresets = {
+    "fruit_stand": dict(
+        stall_archetype="open",
+        awning_color="accent_red", goods_color="foliage_apple",
+    ),
+    "fish_market": dict(
+        stall_archetype="closed_back",
+        awning_color="sky_cool", goods_color="rock_pale",
+    ),
+    "cloth_merchant": dict(
+        stall_archetype="open",
+        awning_color="foliage_amethyst", goods_color="foliage_rose",
+    ),
+    "festival_double": dict(
+        stall_archetype="double",
+        awning_color="foliage_lemon", awning_alt_color="accent_red",
+        goods_color="foliage_coral",
+    ),
+}
+
+# Well — windlass is always present now. Variation: village vs farm vs
+# desert (roofless) builds.
+WELL_PRESETS: FactoryPresets = {
+    "village_well": dict(
+        well_archetype="stone_round",
+    ),
+    "farm_windlass": dict(
+        well_archetype="wooden_box",
+    ),
+    "desert_well": dict(
+        well_archetype="stone_round",
+        has_roof=False, stone_color="rock_warm",
+    ),
+    "old_stone_well": dict(
+        well_archetype="stone_round",
+        stone_color="rock_cool", roof_color="rock_shadow",
+    ),
+}
+
+# Torii — real shrine anatomy (kasagi sweep, shimaki, gakuzuka, base
+# stones). Variation: classic vermilion / plain timber / ryobu / all-black.
+TORII_PRESETS: FactoryPresets = {
+    "vermilion_shrine": dict(
+        torii_archetype="myojin",
+    ),
+    "weathered_timber": dict(
+        torii_archetype="shinmei",
+    ),
+    "grand_ryobu": dict(
+        torii_archetype="ryobu",
+    ),
+    "night_gate": dict(
+        torii_archetype="myojin",
+        gate_color="rock_shadow", accent_color="rock_shadow",
+        base_color="rock_cool",
+    ),
+}
+
+# Wagon — spoked wheels. Variation: covered settler / open farm / handcart.
+WAGON_PRESETS: FactoryPresets = {
+    "settler_schooner": dict(
+        wagon_archetype="prairie_schooner",
+    ),
+    "farm_buckboard": dict(
+        wagon_archetype="buckboard",
+    ),
+    "market_handcart": dict(
+        wagon_archetype="handcart",
+    ),
+}
+
+# Suspension bridge — walkway bridges now carry handrails + lacing and
+# rest on z=0 (sink as needed when spanning a gap).
+SUSPENSION_BRIDGE_PRESETS: FactoryPresets = {
+    "canyon_rope_bridge": dict(
+        bridge_archetype="rope_plank",
+    ),
+    "harbor_cable_span": dict(
+        bridge_archetype="cable_suspension",
+    ),
+    "mine_chain_walk": dict(
+        bridge_archetype="chain_walk",
+    ),
+}
+
+
+# Banner — draped wave grid with stripe band / fringe / pennant chance.
+BANNER_PRESETS: FactoryPresets = {
+    "heraldic_hanging": dict(
+        banner_archetype="hanging",
+        cloth_color="accent_red", accent_color="stucco",
+    ),
+    "guild_banner": dict(
+        banner_archetype="hanging",
+        cloth_color="foliage_amethyst", accent_color="foliage_lemon",
+    ),
+    "castle_flag": dict(
+        banner_archetype="flag_pole",
+        cloth_color="accent_red", accent_color="stucco",
+    ),
+    "festival_street": dict(
+        banner_archetype="horizontal",
+        cloth_color="foliage_lemon", accent_color="accent_red",
+    ),
+}
+
+# Rock spire — faceted-shell columns with strata breaks and talus.
+ROCK_SPIRE_PRESETS: FactoryPresets = {
+    "canyon_needle": dict(
+        spire_archetype="needle",
+    ),
+    "monument_mesa": dict(
+        spire_archetype="mesa",
+    ),
+    "citadel_column": dict(
+        spire_archetype="citadel",
+    ),
+    "badlands_hoodoo": dict(
+        spire_archetype="hoodoo",
+    ),
+    "granite_spire": dict(
+        spire_archetype="needle",
+        rock_color="rock_cool", cap_color="rock_shadow",
+    ),
+}
+
+# Bazaar tent — striped canopies with valance skirts and finials.
+BAZAAR_TENT_PRESETS: FactoryPresets = {
+    "oasis_peaked": dict(
+        bazaar_tent_archetype="peaked",
+        canopy_color="accent_red", canopy_alt_color="stucco",
+    ),
+    "caravan_ridge": dict(
+        bazaar_tent_archetype="ridge",
+        canopy_color="foliage_amber", canopy_alt_color="stucco",
+    ),
+    "souk_awning": dict(
+        bazaar_tent_archetype="awning_open",
+    ),
+    "royal_pavilion": dict(
+        bazaar_tent_archetype="peaked",
+        canopy_color="foliage_amethyst", canopy_alt_color="stucco",
+    ),
+}
+
+
 # ============================================================================
 #   Registry + lookup API
 # ============================================================================
@@ -1371,6 +1568,16 @@ ALL_PRESETS: dict[str, FactoryPresets] = {
     "LowPolyStableYardFactory":      STABLE_YARD_PRESETS,
     "LowPolyTownBlockFactory":       TOWN_BLOCK_PRESETS,
     "LowPolyBoulderFactory":         BOULDER_PRESETS,
+    "LowPolyWindmillFactory":        WINDMILL_PRESETS,
+    "LowPolyBoatFactory":            BOAT_PRESETS,
+    "LowPolyStallFactory":           STALL_PRESETS,
+    "LowPolyWellFactory":            WELL_PRESETS,
+    "LowPolyToriiFactory":           TORII_PRESETS,
+    "LowPolyWagonFactory":           WAGON_PRESETS,
+    "LowPolySuspensionBridgeFactory": SUSPENSION_BRIDGE_PRESETS,
+    "LowPolyBannerFactory":          BANNER_PRESETS,
+    "LowPolyRockSpireFactory":       ROCK_SPIRE_PRESETS,
+    "LowPolyBazaarTentFactory":      BAZAAR_TENT_PRESETS,
     "NativeLowPolyTreeFactory":      TREE_PRESETS,
     "LowPolyPalmTreeFactory":        PALM_PRESETS,
     "LoadedTreeFactory":             LOADED_TREE_PRESETS,

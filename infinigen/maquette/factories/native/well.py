@@ -20,6 +20,7 @@ Material slots:
 from __future__ import annotations
 
 import math
+import random
 
 import bmesh
 import bpy
@@ -127,21 +128,27 @@ def _add_curb_square(
     radius: float, wall_height: float,
     wall_thickness: float = 0.10,
 ) -> None:
-    """4-sided wooden box curb. Built as 4 thin boxes around the perimeter."""
+    """4-sided wooden box curb: 4 plank walls + chunky corner posts that
+    cover the wall joints (and hide any coplanar seams)."""
     side = radius
-    # Each wall is a thin box. Bottom side
     _add_box_slot(bm, slot_ranges, slot,
                   0, -side, wall_height / 2,
-                  side * 2 + wall_thickness, wall_thickness, wall_height)
+                  side * 2 - wall_thickness, wall_thickness, wall_height)
     _add_box_slot(bm, slot_ranges, slot,
                   0, side, wall_height / 2,
-                  side * 2 + wall_thickness, wall_thickness, wall_height)
+                  side * 2 - wall_thickness, wall_thickness, wall_height)
     _add_box_slot(bm, slot_ranges, slot,
                   -side, 0, wall_height / 2,
                   wall_thickness, side * 2 - wall_thickness, wall_height)
     _add_box_slot(bm, slot_ranges, slot,
                   side, 0, wall_height / 2,
                   wall_thickness, side * 2 - wall_thickness, wall_height)
+    post_s = wall_thickness * 1.9
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            _add_box_slot(bm, slot_ranges, slot,
+                          sx * side, sy * side, (wall_height + 0.07) / 2,
+                          post_s, post_s, wall_height + 0.07)
 
 
 def _add_roof_posts(
@@ -190,31 +197,49 @@ def _add_roof(
     slot_ranges.append((start, end, slot))
 
 
-def _add_bucket(
-    bm, slot_ranges, wood_slot,
-    radius: float, wall_height: float, roof_height: float, has_roof: bool,
-    bucket_size: float,
+def _add_roller(
+    bm, slot_ranges, slot,
+    x0: float, x1: float, cz: float, r: float, n_sides: int = 6,
 ) -> None:
-    """A small bucket hanging from the roof ridge (if has_roof) or just
-    sitting on the curb otherwise. Built as a small cylinder."""
+    """Hexagonal windlass roller along the X axis."""
+    start = _bm_face_count(bm)
+    ring0, ring1 = [], []
+    for s in range(n_sides):
+        a = 2 * math.pi * s / n_sides
+        y, z = r * math.cos(a), cz + r * math.sin(a)
+        ring0.append(bm.verts.new((x0, y, z)))
+        ring1.append(bm.verts.new((x1, y, z)))
+    bm.verts.ensure_lookup_table()
+    for s in range(n_sides):
+        ns = (s + 1) % n_sides
+        bm.faces.new((ring0[s], ring0[ns], ring1[ns], ring1[s]))
+    bm.faces.new(list(reversed(ring0)))
+    bm.faces.new(ring1)
+    end = _bm_face_count(bm)
+    slot_ranges.append((start, end, slot))
+
+
+def _add_hanging_bucket(
+    bm, slot_ranges, wood_slot,
+    *, cx: float, axle_z: float, bucket_top_z: float, bucket_size: float,
+) -> None:
+    """Rope from the roller + a tapered bucket hanging from it."""
+    # Rope — a thin box from the axle down to the bucket.
+    rope_len = axle_z - bucket_top_z
+    _add_box_slot(bm, slot_ranges, wood_slot,
+                  cx, 0, axle_z - rope_len / 2, 0.025, 0.025, rope_len)
+    # Tapered bucket (wider at the top), 6 sides.
     n_sides = 6
-    if has_roof:
-        # Hang under the apex
-        cz = wall_height + roof_height * 0.4
-    else:
-        # Sitting on the curb edge
-        cz = wall_height + bucket_size * 0.3
-    half_h = bucket_size / 2
-    z0 = cz - half_h
-    z1 = cz + half_h
+    r_top = bucket_size * 0.34
+    r_bot = bucket_size * 0.25
+    z1 = bucket_top_z
+    z0 = bucket_top_z - bucket_size * 0.62
     bot, top = [], []
     start = _bm_face_count(bm)
     for s in range(n_sides):
         a = 2 * math.pi * s / n_sides
-        x = bucket_size * 0.3 * math.cos(a)
-        y = bucket_size * 0.3 * math.sin(a)
-        bot.append(bm.verts.new((x, y, z0)))
-        top.append(bm.verts.new((x, y, z1)))
+        bot.append(bm.verts.new((cx + r_bot * math.cos(a), r_bot * math.sin(a), z0)))
+        top.append(bm.verts.new((cx + r_top * math.cos(a), r_top * math.sin(a), z1)))
     bm.verts.ensure_lookup_table()
     for s in range(n_sides):
         ns = (s + 1) % n_sides
@@ -223,6 +248,24 @@ def _add_bucket(
     bm.faces.new(list(reversed(bot)))
     end = _bm_face_count(bm)
     slot_ranges.append((start, end, wood_slot))
+
+
+def _add_stone_blocks(
+    bm, slot_ranges, slot,
+    radius: float, wall_height: float, rng: random.Random,
+) -> None:
+    """A few protruding stones half-embedded in the curb so the ring reads
+    as masonry instead of a smooth pipe."""
+    for _ in range(rng.randint(5, 8)):
+        a = rng.uniform(0, 2 * math.pi)
+        z = rng.uniform(0.14, wall_height - 0.12)
+        r = radius + 0.012
+        _add_box_slot(
+            bm, slot_ranges, slot,
+            r * math.cos(a), r * math.sin(a), z,
+            rng.uniform(0.13, 0.22), rng.uniform(0.10, 0.18),
+            rng.uniform(0.10, 0.16),
+        )
 
 
 class LowPolyWellFactory(AssetFactory):
@@ -263,8 +306,12 @@ class LowPolyWellFactory(AssetFactory):
         wood_color: str | None = None,
         roof_color: str | None = None,
         coarse: bool = False,
+        **_unused_kwargs,
     ):
         super().__init__(factory_seed, coarse=coarse)
+        if _unused_kwargs:
+            from infinigen.maquette.factory_kwargs_compat import accept_unused_kwargs
+            accept_unused_kwargs("LowPolyWellFactory", _unused_kwargs)
         if well_archetype not in _WELL_ARCHETYPES:
             # Lenient fallback rather than crash. Sonnet has been
             # observed to hallucinate plausible-sounding archetype
@@ -332,6 +379,7 @@ class LowPolyWellFactory(AssetFactory):
     def _build(self) -> bpy.types.Object:
         bm = bmesh.new()
         slot_ranges: list[tuple[int, int, int]] = []
+        rng = random.Random(int(self.factory_seed) + 33991)
 
         # Curb
         if self.well_archetype == "stone_round":
@@ -339,32 +387,81 @@ class LowPolyWellFactory(AssetFactory):
                 bm, slot_ranges, 0,
                 self.radius, self.wall_height, self.n_sides,
             )
+            # Coping lip + a few protruding stones for a masonry read.
+            _add_curb_round(
+                bm, slot_ranges, 0,
+                self.radius * 1.07, 0.09, self.n_sides,
+                wall_thickness=0.16,
+            )
+            # Shift the lip ring up to the top of the wall.
+            for v in bm.verts[-self.n_sides * 4:]:
+                v.co.z += self.wall_height - 0.045
+            _add_stone_blocks(
+                bm, slot_ranges, 0, self.radius, self.wall_height, rng,
+            )
         else:  # wooden_box
             _add_curb_square(
                 bm, slot_ranges, 0,
                 self.radius, self.wall_height,
             )
 
-        # Roof posts + roof
+        # Windlass posts — always present; they carry the roller, and the
+        # roof when there is one. (A well without its winch never read as
+        # a well.)
         if self.has_roof and self.roof_height > 0:
-            _add_roof_posts(
-                bm, slot_ranges, 1,
-                self.radius, self.wall_height,
-                self.roof_height, self.post_radius,
-            )
+            post_top = self.wall_height + self.roof_height
+        else:
+            post_top = self.wall_height + max(0.80, self.radius * 1.05)
+        # Posts run thicker than the curb wall so their faces never sit
+        # coplanar with it (coplanar overlap z-fights as black seams).
+        post_t = self.post_radius * 2
+        if self.well_archetype == "wooden_box":
+            post_t = max(post_t, 0.16)
+        for sign in (-1, 1):
+            _add_box_slot(bm, slot_ranges, 1,
+                          sign * self.radius, 0, post_top / 2,
+                          post_t, post_t, post_top)
+
+        if self.has_roof and self.roof_height > 0:
             _add_roof(
                 bm, slot_ranges, 2,
                 self.radius, self.wall_height, self.roof_height,
                 self.post_radius,
             )
+            axle_z = self.wall_height + self.roof_height * 0.52
+        else:
+            axle_z = post_top - 0.14
 
-        # Bucket
+        # Roller + crank handle.
+        span = self.radius - self.post_radius * 1.6
+        _add_roller(bm, slot_ranges, 1, -span, span, axle_z, 0.07)
+        crank_side = rng.choice((-1.0, 1.0))
+        cx = crank_side * (self.radius + 0.10)
+        _add_box_slot(bm, slot_ranges, 1, cx, 0, axle_z, 0.20, 0.05, 0.05)
+        _add_box_slot(bm, slot_ranges, 1,
+                      crank_side * (self.radius + 0.18), 0, axle_z - 0.13,
+                      0.05, 0.05, 0.26)
+
+        # Bucket on a rope — hanging height varies with seed; sometimes it
+        # rests on the coping instead.
         if self.has_bucket:
-            _add_bucket(
-                bm, slot_ranges, 1,
-                self.radius, self.wall_height, self.roof_height,
-                self.has_roof, self.bucket_size,
-            )
+            if rng.random() < 0.25:
+                # Resting on the curb edge.
+                _add_hanging_bucket(
+                    bm, slot_ranges, 1,
+                    cx=-(self.radius - self.bucket_size * 0.5), axle_z=axle_z,
+                    bucket_top_z=self.wall_height + self.bucket_size * 0.60,
+                    bucket_size=self.bucket_size,
+                )
+            else:
+                hang = rng.uniform(0.35, 0.75)
+                bucket_top = self.wall_height + (axle_z - self.wall_height) * (1 - hang)
+                _add_hanging_bucket(
+                    bm, slot_ranges, 1,
+                    cx=0.0, axle_z=axle_z,
+                    bucket_top_z=max(bucket_top, self.wall_height * 0.55),
+                    bucket_size=self.bucket_size,
+                )
 
         me = bpy.data.meshes.new(f"LowPolyWell({self.factory_seed})_Mesh")
         bm.to_mesh(me)

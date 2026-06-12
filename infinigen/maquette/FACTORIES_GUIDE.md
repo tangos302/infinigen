@@ -398,6 +398,9 @@ LowPolyBannerFactory — hanging cloth banner / flag.
 
 **banner** archetypes: `hanging` / `flag_pole` / `horizontal`
 
+**Named presets:** `castle_flag` / `festival_street` / `guild_banner` / `heraldic_hanging`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -411,6 +414,7 @@ has_crossbar: bool | None = None
 crossbar_extra: float | None = None
 cloth_color: str | None = None
 pole_color: str | None = None
+accent_color: str | None = None
 ```
 
 ### `LowPolyBarrelFactory`
@@ -442,6 +446,9 @@ LowPolyBazaarTentFactory — desert bazaar / market tent.
 
 **bazaar_tent** archetypes: `peaked` / `ridge` / `awning_open`
 
+**Named presets:** `caravan_ridge` / `oasis_peaked` / `royal_pavilion` / `souk_awning`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -452,6 +459,7 @@ eave_height: float | None = None
 peak_rise: float | None = None
 canopy_color: str | None = None
 pole_color: str | None = None
+canopy_alt_color: str | None = None
 ```
 
 ### `LowPolyBellFactory`
@@ -475,9 +483,12 @@ roof_color: str | None = None
 
 ### `LowPolyBoatFactory`
 
-LowPolyBoatFactory — rowboat / dinghy / pirate brig.
+LowPolyBoatFactory — rowboat / dinghy / fishing skiff / pirate brig.
 
-**boat** archetypes: `rowboat` / `dinghy` / `pirate_brig`
+**boat** archetypes: `rowboat` / `dinghy` / `fishing_skiff` / `pirate_brig`
+
+**Named presets:** `beached_dinghy` / `ghost_ship` / `harbor_rowboat` / `pirate_brig` / `village_fishing_skiff`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
 
 **Constructor parameters:**
 ```
@@ -499,6 +510,7 @@ has_bowsprit: bool | None = None
 hull_color: str | None = None
 trim_color: str | None = None
 sail_color: str | None = None
+accent_color: str | None = None
 ```
 
 ### `LowPolyHouseFactory`
@@ -1159,6 +1171,9 @@ LowPolyRockSpireFactory — tall narrow rock columns / spires / mesas.
 
 **spire** archetypes: `needle` / `mesa` / `citadel` / `hoodoo`
 
+**Named presets:** `badlands_hoodoo` / `canyon_needle` / `citadel_column` / `granite_spire` / `monument_mesa`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -1315,6 +1330,9 @@ LowPolyStallFactory — marketplace stall with awning canopy.
 
 **stall** archetypes: `open` / `closed_back` / `double`
 
+**Named presets:** `cloth_merchant` / `festival_double` / `fish_market` / `fruit_stand`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -1335,6 +1353,7 @@ frame_color: str | None = None
 awning_color: str | None = None
 table_color: str | None = None
 goods_color: str | None = None
+awning_alt_color: str | None = None
 ```
 
 ### `LowPolyStoneBridgeFactory`
@@ -1415,6 +1434,9 @@ emission_strength: float = 4.6
 LowPolySuspensionBridgeFactory — rope-and-plank bridge.
 
 **bridge** archetypes: `rope_plank` / `cable_suspension` / `chain_walk`
+
+**Named presets:** `canyon_rope_bridge` / `harbor_cable_span` / `mine_chain_walk`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
 
 **Constructor parameters:**
 ```
@@ -1521,6 +1543,9 @@ LowPolyToriiFactory — Japanese-style torii gate.
 
 **torii** archetypes: `myojin` / `shinmei` / `ryobu`
 
+**Named presets:** `grand_ryobu` / `night_gate` / `vermilion_shrine` / `weathered_timber`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -1537,6 +1562,7 @@ nuki_at_pct: float | None = None
 has_bracing: bool | None = None
 gate_color: str | None = None
 accent_color: str | None = None
+base_color: str | None = None
 ```
 
 ### `LowPolyTownBlockFactory`
@@ -1677,6 +1703,9 @@ accent_color: str | None = None
 LowPolyWagonFactory — covered prairie schooner / buckboard / handcart.
 
 **wagon** archetypes: `prairie_schooner` / `buckboard` / `handcart`
+
+**Named presets:** `farm_buckboard` / `market_handcart` / `settler_schooner`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
 
 **Constructor parameters:**
 ```
@@ -1830,6 +1859,9 @@ LowPolyWellFactory — village / farmstead well.
 
 **well** archetypes: `stone_round` / `wooden_box`
 
+**Named presets:** `desert_well` / `farm_windlass` / `old_stone_well` / `village_well`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
+
 **Constructor parameters:**
 ```
 factory_seed
@@ -1850,9 +1882,12 @@ roof_color: str | None = None
 
 ### `LowPolyWindmillFactory`
 
-LowPolyWindmillFactory — windmill / windpump silhouette.
+LowPolyWindmillFactory — windmill / windpump landmark.
 
 **windmill** archetypes: `dutch` / `western_pump` / `stone_mill`
+
+**Named presets:** `desert_mill` / `dutch_grain` / `harbor_red_cap` / `old_stone_mill` / `prairie_pump`
+Use a preset when the prompt asks for a coherent look (for example weathered, coastal, dead, young, lush) instead of hand-tuning raw dimensions.
 
 **Constructor parameters:**
 ```
@@ -1875,6 +1910,7 @@ dome_height: float | None = None
 tower_color: str | None = None
 blade_color: str | None = None
 roof_color: str | None = None
+sail_color: str | None = None
 ```
 
 ### `LowPolyZenGardenGateFactory`

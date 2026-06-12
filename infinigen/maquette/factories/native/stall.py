@@ -18,8 +18,10 @@ stalls without rebuilding the geometry.
 
 Material slots:
   slot 0 = wooden frame (posts, rails)
-  slot 1 = awning cloth                  (default `accent_red`)
-  slot 2 = table top + back wall         (default same as frame)
+  slot 1 = awning cloth + side curtain   (default `accent_red`)
+  slot 2 = table top / counter / back wall (default same as frame)
+  slot 3 = table goods
+  slot 4 = awning alternate stripe       (default `stucco`)
 """
 
 from __future__ import annotations
@@ -43,35 +45,35 @@ _ARCHETYPE_DEFAULTS = {
     "open": dict(
         length=2.25, width=1.35,
         post_height=2.15, post_radius=0.055,
-        awning_pitch=0.34, awning_overhang=0.25,
+        awning_pitch=0.55, awning_overhang=0.30,
         has_table=True, table_height=0.85, table_thickness=0.05,
         has_back_wall=False, back_wall_height=0.0,
         goods_count=5,
         is_double=False,
         frame_color="wood", awning_color="accent_red", table_color="wood",
-        goods_color="foliage_amber",
+        goods_color="foliage_amber", awning_alt_color="stucco",
     ),
     "closed_back": dict(
         length=2.25, width=1.35,
         post_height=2.15, post_radius=0.055,
-        awning_pitch=0.34, awning_overhang=0.25,
+        awning_pitch=0.55, awning_overhang=0.30,
         has_table=True, table_height=0.85, table_thickness=0.05,
         has_back_wall=True, back_wall_height=1.7,
         goods_count=4,
         is_double=False,
         frame_color="wood", awning_color="foliage_amber", table_color="wood",
-        goods_color="ground_sand",
+        goods_color="ground_sand", awning_alt_color="stucco",
     ),
     "double": dict(
         length=4.0, width=1.35,
         post_height=2.15, post_radius=0.055,
-        awning_pitch=0.34, awning_overhang=0.28,
+        awning_pitch=0.55, awning_overhang=0.32,
         has_table=True, table_height=0.85, table_thickness=0.05,
         has_back_wall=False, back_wall_height=0.0,
         goods_count=8,
         is_double=True,
         frame_color="wood", awning_color="foliage_apple", table_color="wood",
-        goods_color="foliage_lemon",
+        goods_color="foliage_lemon", awning_alt_color="stucco",
     ),
 }
 
@@ -108,28 +110,42 @@ def _add_box_slot(bm, slot_ranges, slot, cx, cy, cz, sx, sy, sz) -> None:
     slot_ranges.append((s, e, slot))
 
 
-def _add_awning_quad(
-    bm, slot_ranges, slot,
+def _add_striped_awning(
+    bm, slot_ranges,
     length: float, width: float,
     front_z: float, back_z: float,
     overhang: float,
+    *,
+    slot_a: int, slot_b: int,
+    n_strips: int,
+    scallop_drop: float = 0.16,
 ) -> None:
-    """A single sloped quad — front edge lower than back. Front edge
-    overhangs by `overhang` on +Y (front) and slightly on -Y (back).
-    Stall body extends along X."""
-    start = _bm_face_count(bm)
+    """Sloped market awning: alternating colour strips running down the
+    slope, with a scalloped (triangle) valance hanging off the front edge.
+    With n_strips=1 the cloth is a single colour but keeps the scallops.
+    Front of stall is -Y; stall body extends along X."""
     hx = length / 2 + overhang
-    front_y = -width / 2 - overhang   # front of stall is at -Y
+    front_y = -width / 2 - overhang
     back_y = +width / 2
-    # 4 corners
-    fL = bm.verts.new((-hx, front_y, front_z))
-    fR = bm.verts.new(( hx, front_y, front_z))
-    bR = bm.verts.new(( hx, back_y, back_z))
-    bL = bm.verts.new((-hx, back_y, back_z))
-    bm.verts.ensure_lookup_table()
-    bm.faces.new((fL, fR, bR, bL))
-    end = _bm_face_count(bm)
-    slot_ranges.append((start, end, slot))
+    step = (2 * hx) / n_strips
+    for i in range(n_strips):
+        slot = slot_a if i % 2 == 0 else slot_b
+        x0 = -hx + i * step
+        x1 = x0 + step
+        start = _bm_face_count(bm)
+        bL = bm.verts.new((x0, back_y, back_z))
+        bR = bm.verts.new((x1, back_y, back_z))
+        fR = bm.verts.new((x1, front_y, front_z))
+        fL = bm.verts.new((x0, front_y, front_z))
+        bm.verts.ensure_lookup_table()
+        bm.faces.new((bL, bR, fR, fL))
+        # Scallop triangle hanging from this strip's front edge.
+        s0 = bm.verts.new((x0, front_y, front_z))
+        s1 = bm.verts.new((x1, front_y, front_z))
+        s2 = bm.verts.new(((x0 + x1) / 2, front_y, front_z - scallop_drop))
+        bm.verts.ensure_lookup_table()
+        bm.faces.new((s0, s1, s2))
+        slot_ranges.append((start, _bm_face_count(bm), slot))
 
 
 class LowPolyStallFactory(AssetFactory):
@@ -180,6 +196,7 @@ class LowPolyStallFactory(AssetFactory):
         awning_color: str | None = None,
         table_color: str | None = None,
         goods_color: str | None = None,
+        awning_alt_color: str | None = None,
         coarse: bool = False,
         **_unused_kwargs,
     ):
@@ -224,6 +241,7 @@ class LowPolyStallFactory(AssetFactory):
         self.awning_color = awning_color or d["awning_color"]
         self.table_color = table_color or d["table_color"]
         self.goods_color = goods_color or d["goods_color"]
+        self.awning_alt_color = awning_alt_color or d["awning_alt_color"]
 
     def create_placeholder(self, **kwargs) -> bpy.types.Object:
         ph = bpy.data.objects.new(
@@ -244,47 +262,55 @@ class LowPolyStallFactory(AssetFactory):
         pr = self.post_radius
         ps = pr * 2  # post side length
 
+        # The awning plane: back edge rides above the back posts, front edge
+        # drops by `awning_pitch`. Front posts stop at the cloth so they
+        # don't pierce it.
+        awn_back_z = H + 0.06
+        awn_front_z = H - self.awning_pitch
+        awn_back_y = W / 2
+        awn_front_y = -W / 2 - self.awning_overhang
+
+        def _cloth_z(y: float) -> float:
+            t = (awn_back_y - y) / (awn_back_y - awn_front_y)
+            return awn_back_z - (awn_back_z - awn_front_z) * t
+
+        front_post_h = _cloth_z(-W / 2 + pr) - 0.03
+
         # Posts at corners (and middle for double-stall)
         post_xs = [-L/2 + pr, L/2 - pr]
         if self.is_double:
             post_xs = [-L/2 + pr, 0.0, L/2 - pr]
-        post_ys = [-W/2 + pr, W/2 - pr]
         for px in post_xs:
-            for py in post_ys:
-                _add_box_slot(bm, slot_ranges, 0, px, py, H/2, ps, ps, H)
+            _add_box_slot(bm, slot_ranges, 0, px, -W/2 + pr,
+                          front_post_h / 2, ps, ps, front_post_h)
+            _add_box_slot(bm, slot_ranges, 0, px, W/2 - pr, H/2, ps, ps, H)
 
-        # Awning — sloped quad, front lower than back
-        # Back at z = post_height; front at z = post_height - pitch
-        front_z = H - self.awning_pitch
-        back_z = H
-        _add_awning_quad(
-            bm, slot_ranges, 1,
-            L, W, front_z, back_z, self.awning_overhang,
+        # Awning — striped sloped cloth with a scalloped valance. The back
+        # edge rides above the posts, the front edge drops by `awning_pitch`
+        # so the slope reads even from the default high camera.
+        striped = rng.random() < 0.70
+        if striped:
+            n_strips = 9 if self.is_double else 7
+        else:
+            n_strips = 1
+        _add_striped_awning(
+            bm, slot_ranges,
+            L, W, awn_front_z, awn_back_z, self.awning_overhang,
+            slot_a=1, slot_b=4, n_strips=n_strips,
         )
 
-        # Chunky front valance blocks make the canopy visible from the
-        # default high camera and keep it from reading as a single paper face.
-        valance_y = -W / 2 - self.awning_overhang + 0.03
-        valance_z = front_z - 0.12
-        valance_count = 4 if self.is_double else 3
-        valance_step = L / valance_count
-        for i in range(valance_count):
-            cx = -L / 2 + valance_step * (i + 0.5)
-            _add_box_slot(
-                bm, slot_ranges, 1,
-                cx, valance_y, valance_z,
-                valance_step * 0.72, 0.055, 0.22,
-            )
-
         # Upper wooden rails tie the posts together and improve the silhouette
-        # when the stall is seen from a distance.
-        rail_z = H - 0.18
-        _add_box_slot(bm, slot_ranges, 0, 0.0, -W / 2 + pr, rail_z, L, ps, ps)
-        _add_box_slot(bm, slot_ranges, 0, 0.0, +W / 2 - pr, rail_z, L, ps, ps)
-        _add_box_slot(bm, slot_ranges, 0, -L / 2 + pr, 0.0, rail_z, ps, W, ps)
-        _add_box_slot(bm, slot_ranges, 0, +L / 2 - pr, 0.0, rail_z, ps, W, ps)
+        # when the stall is seen from a distance. Front + side rails sit
+        # below the lowered front posts so nothing pierces the cloth.
+        rail_front_z = front_post_h - 0.16
+        rail_back_z = H - 0.18
+        _add_box_slot(bm, slot_ranges, 0, 0.0, -W / 2 + pr, rail_front_z, L, ps, ps)
+        _add_box_slot(bm, slot_ranges, 0, 0.0, +W / 2 - pr, rail_back_z, L, ps, ps)
+        _add_box_slot(bm, slot_ranges, 0, -L / 2 + pr, 0.0, rail_front_z, ps, W, ps)
+        _add_box_slot(bm, slot_ranges, 0, +L / 2 - pr, 0.0, rail_front_z, ps, W, ps)
 
-        # Table — flat surface inside the stall
+        # Table — flat surface inside the stall, with a solid counter front
+        # so the stall has body below the tabletop.
         if self.has_table:
             tz = self.table_height
             _add_box_slot(
@@ -292,9 +318,16 @@ class LowPolyStallFactory(AssetFactory):
                 0, 0, tz + self.table_thickness / 2,
                 L - 2 * pr, W - 2 * pr, self.table_thickness,
             )
+            if rng.random() < 0.78:
+                panel_h = tz - 0.06
+                _add_box_slot(
+                    bm, slot_ranges, 2,
+                    0, -W / 2 + pr + 0.02, panel_h / 2 + 0.02,
+                    L - 2 * pr, 0.045, panel_h,
+                )
             for _ in range(max(0, self.goods_count)):
                 gx = rng.uniform(-L * 0.36, L * 0.36)
-                gy = rng.uniform(-W * 0.22, W * 0.22)
+                gy = rng.uniform(-W * 0.30, W * 0.12)  # bias toward the front
                 gs = rng.uniform(0.10, 0.18)
                 _add_box_slot(
                     bm, slot_ranges, 3,
@@ -303,6 +336,20 @@ class LowPolyStallFactory(AssetFactory):
                     gs * rng.uniform(0.9, 1.4),
                     gs * rng.uniform(0.7, 1.6),
                 )
+
+        # Side curtain — a tied-back cloth on one end, seed-gated. Adds
+        # asymmetry so a row of stalls doesn't read as clones. Its top stays
+        # under the sloping cloth at the curtain's front edge.
+        if rng.random() < 0.40:
+            side = rng.choice((-1.0, 1.0))
+            cx = side * (L / 2 - pr - 0.02)
+            curt_top = _cloth_z(-W * 0.37) - 0.06
+            curt_h = curt_top - 0.35
+            _add_box_slot(
+                bm, slot_ranges, 1,
+                cx, 0.0, 0.35 + curt_h / 2,
+                0.04, W * 0.74, curt_h,
+            )
 
         # Back wall — vertical panel along the back edge (+Y)
         if self.has_back_wall and self.back_wall_height > 0:
@@ -320,7 +367,7 @@ class LowPolyStallFactory(AssetFactory):
         obj = bpy.data.objects.new(f"LowPolyStall({self.factory_seed})", me)
         bpy.context.scene.collection.objects.link(obj)
 
-        while len(obj.data.materials) < 4:
+        while len(obj.data.materials) < 5:
             obj.data.materials.append(None)
 
         for start, end, slot in slot_ranges:
@@ -331,6 +378,7 @@ class LowPolyStallFactory(AssetFactory):
             p.use_smooth = False
 
         apply_palette_slots(
-            obj, [self.frame_color, self.awning_color, self.table_color, self.goods_color]
+            obj, [self.frame_color, self.awning_color, self.table_color,
+                  self.goods_color, self.awning_alt_color]
         )
         return obj
